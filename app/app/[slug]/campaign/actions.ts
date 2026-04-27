@@ -48,9 +48,44 @@ export async function addQueueItemAction(slug: string, data: unknown) {
   return { ok: true };
 }
 
+export async function updateQueueItemAction(slug: string, id: string, data: unknown) {
+  const { project } = await requireProject(slug);
+  const parsed = queueItemSchema.safeParse(data);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid queue item" };
+  await db.queueItem.updateMany({
+    where: { id, projectId: project.id },
+    data: parsed.data,
+  });
+  revalidatePath(`/app/${slug}/campaign`);
+  return { ok: true };
+}
+
 export async function deleteQueueItemAction(slug: string, id: string) {
   const { project } = await requireProject(slug);
   await db.queueItem.deleteMany({ where: { id, projectId: project.id } });
+  revalidatePath(`/app/${slug}/campaign`);
+  return { ok: true };
+}
+
+/** Move a queue item one slot up or down by swapping positions with its neighbor. */
+export async function moveQueueItemAction(slug: string, id: string, direction: "up" | "down") {
+  const { project } = await requireProject(slug);
+  const items = await db.queueItem.findMany({
+    where: { projectId: project.id },
+    orderBy: { position: "asc" },
+    select: { id: true, position: true },
+  });
+  const idx = items.findIndex((i) => i.id === id);
+  if (idx === -1) return { error: "Item not found" };
+  const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+  if (swapIdx < 0 || swapIdx >= items.length) return { ok: true }; // already at edge
+
+  const a = items[idx];
+  const b = items[swapIdx];
+  await db.$transaction([
+    db.queueItem.update({ where: { id: a.id }, data: { position: b.position } }),
+    db.queueItem.update({ where: { id: b.id }, data: { position: a.position } }),
+  ]);
   revalidatePath(`/app/${slug}/campaign`);
   return { ok: true };
 }

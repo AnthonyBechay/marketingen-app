@@ -1,7 +1,7 @@
 "use client";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { Save, Plus, X, Sparkles, Trash2 } from "lucide-react";
+import { Save, Plus, X, Sparkles, Trash2, Pencil, ChevronUp, ChevronDown, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,9 +16,18 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   saveCampaignAction,
   addQueueItemAction,
+  updateQueueItemAction,
   deleteQueueItemAction,
+  moveQueueItemAction,
   aiBuildCampaignAction,
 } from "./actions";
 
@@ -171,7 +180,7 @@ export function CampaignEditor({
         </Button>
       </div>
 
-      <QueueSection slug={slug} queue={queue} />
+      <QueueSection slug={slug} queue={queue} pillarNames={data.pillars.map((p) => p.name)} />
     </div>
   );
 }
@@ -248,14 +257,32 @@ function AICampaignHelper({ slug }: { slug: string }) {
   );
 }
 
-function QueueSection({ slug, queue: initialQueue }: { slug: string; queue: Queue[] }) {
+const FORMAT_OPTIONS = ["carousel", "story", "case-study"];
+
+function QueueSection({
+  slug,
+  queue: initialQueue,
+  pillarNames,
+}: {
+  slug: string;
+  queue: Queue[];
+  pillarNames: string[];
+}) {
   const [queue, setQueue] = useState(initialQueue);
   const [showAdd, setShowAdd] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [topic, setTopic] = useState("");
   const [pillar, setPillar] = useState("");
   const [format, setFormat] = useState("");
   const [notes, setNotes] = useState("");
   const [pending, startTransition] = useTransition();
+
+  function resetAddForm() {
+    setTopic("");
+    setPillar("");
+    setFormat("");
+    setNotes("");
+  }
 
   function onAdd() {
     if (!topic.trim()) return;
@@ -266,17 +293,14 @@ function QueueSection({ slug, queue: initialQueue }: { slug: string; queue: Queu
         format: format || undefined,
         notes: notes || undefined,
       });
-      if (res?.error) toast.error(res.error);
-      else {
-        toast.success("Added to queue");
-        setTopic("");
-        setPillar("");
-        setFormat("");
-        setNotes("");
-        setShowAdd(false);
-        // Optimistic: refetch by reloading the page section
-        window.location.reload();
+      if (res?.error) {
+        toast.error(res.error);
+        return;
       }
+      toast.success("Added to queue");
+      resetAddForm();
+      setShowAdd(false);
+      window.location.reload();
     });
   }
 
@@ -287,12 +311,69 @@ function QueueSection({ slug, queue: initialQueue }: { slug: string; queue: Queu
     });
   }
 
+  function onMove(id: string, direction: "up" | "down") {
+    const idx = queue.findIndex((q) => q.id === id);
+    if (idx === -1) return;
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= queue.length) return;
+    // Optimistic local swap, then persist.
+    setQueue((q) => {
+      const next = [...q];
+      [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
+      return next;
+    });
+    startTransition(async () => {
+      const res = await moveQueueItemAction(slug, id, direction);
+      if (res?.error) {
+        toast.error(res.error);
+        // Revert on failure
+        setQueue(initialQueue);
+      }
+    });
+  }
+
+  function onSaveEdit(id: string, patch: { topic: string; pillar: string; format: string; notes: string }) {
+    if (!patch.topic.trim()) {
+      toast.error("Topic is required");
+      return;
+    }
+    startTransition(async () => {
+      const res = await updateQueueItemAction(slug, id, {
+        topic: patch.topic,
+        pillar: patch.pillar || undefined,
+        format: patch.format || undefined,
+        notes: patch.notes || undefined,
+      });
+      if (res?.error) {
+        toast.error(res.error);
+        return;
+      }
+      setQueue((q) =>
+        q.map((i) =>
+          i.id === id
+            ? {
+                ...i,
+                topic: patch.topic,
+                pillar: patch.pillar || null,
+                format: patch.format || null,
+                notes: patch.notes || null,
+              }
+            : i,
+        ),
+      );
+      setEditingId(null);
+      toast.success("Updated");
+    });
+  }
+
   return (
     <div className={SECTION}>
       <div className="flex items-center justify-between">
         <div>
           <h3 className="font-semibold">Idea queue</h3>
-          <p className="text-xs text-muted-foreground">{queue.length} ideas. Top of list goes next.</p>
+          <p className="text-xs text-muted-foreground">
+            {queue.length} ideas. Top of list goes next when you click <em>Generate next</em>.
+          </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => setShowAdd(!showAdd)}>
           <Plus className="w-3 h-3" /> Add idea
@@ -301,14 +382,26 @@ function QueueSection({ slug, queue: initialQueue }: { slug: string; queue: Queu
 
       {showAdd && (
         <div className="space-y-2 border border-border/60 rounded-lg p-3 bg-secondary/30">
-          <Input placeholder="Topic" value={topic} onChange={(e) => setTopic(e.target.value)} />
+          <Input placeholder="Topic" value={topic} onChange={(e) => setTopic(e.target.value)} autoFocus />
           <div className="grid grid-cols-2 gap-2">
-            <Input placeholder="Pillar" value={pillar} onChange={(e) => setPillar(e.target.value)} />
-            <Input placeholder="Format (carousel/story)" value={format} onChange={(e) => setFormat(e.target.value)} />
+            <Select value={pillar || "__none__"} onValueChange={(v) => setPillar(v === "__none__" ? "" : v)}>
+              <SelectTrigger><SelectValue placeholder="Pillar (optional)" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">None</SelectItem>
+                {pillarNames.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={format || "__any__"} onValueChange={(v) => setFormat(v === "__any__" ? "" : v)}>
+              <SelectTrigger><SelectValue placeholder="Format (optional)" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__any__">Any</SelectItem>
+                {FORMAT_OPTIONS.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
           <Textarea rows={2} placeholder="Notes (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} />
           <div className="flex gap-2 justify-end">
-            <Button variant="ghost" size="sm" onClick={() => setShowAdd(false)}>Cancel</Button>
+            <Button variant="ghost" size="sm" onClick={() => { setShowAdd(false); resetAddForm(); }}>Cancel</Button>
             <Button size="sm" onClick={onAdd} disabled={pending}>Add</Button>
           </div>
         </div>
@@ -318,23 +411,124 @@ function QueueSection({ slug, queue: initialQueue }: { slug: string; queue: Queu
         {queue.length === 0 ? (
           <p className="text-sm text-muted-foreground italic">No ideas in the queue yet.</p>
         ) : (
-          queue.map((q, i) => (
-            <div key={q.id} className="flex items-start gap-3 border border-border/60 rounded-lg p-3">
-              <div className="font-mono text-xs text-muted-foreground mt-1 w-6">#{i + 1}</div>
-              <div className="flex-1 min-w-0">
-                <div className="font-medium">{q.topic}</div>
-                <div className="flex gap-3 text-xs text-muted-foreground mt-1">
-                  {q.pillar && <span>📌 {q.pillar}</span>}
-                  {q.format && <span>🎨 {q.format}</span>}
+          queue.map((q, i) =>
+            editingId === q.id ? (
+              <QueueItemEditor
+                key={q.id}
+                item={q}
+                pillarNames={pillarNames}
+                onCancel={() => setEditingId(null)}
+                onSave={(patch) => onSaveEdit(q.id, patch)}
+                pending={pending}
+              />
+            ) : (
+              <div key={q.id} className="flex items-start gap-3 border border-border/60 rounded-lg p-3 group">
+                <div className="font-mono text-xs text-muted-foreground mt-1 w-6 flex-shrink-0">#{i + 1}</div>
+
+                {/* Reorder arrows */}
+                <div className="flex flex-col flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => onMove(q.id, "up")}
+                    disabled={i === 0 || pending}
+                    className="text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed leading-none"
+                    title="Move up"
+                  >
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onMove(q.id, "down")}
+                    disabled={i === queue.length - 1 || pending}
+                    className="text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed leading-none"
+                    title="Move down"
+                  >
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  </button>
                 </div>
-                {q.notes && <p className="text-xs text-muted-foreground mt-1">{q.notes}</p>}
+
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium">{q.topic}</div>
+                  <div className="flex gap-3 text-xs text-muted-foreground mt-1 flex-wrap">
+                    {q.pillar && <span>📌 {q.pillar}</span>}
+                    {q.format && <span>🎨 {q.format}</span>}
+                  </div>
+                  {q.notes && <p className="text-xs text-muted-foreground mt-1">{q.notes}</p>}
+                </div>
+
+                <div className="flex flex-shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setEditingId(q.id)}
+                    disabled={pending}
+                    title="Edit"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => onDelete(q.id)}
+                    disabled={pending}
+                    title="Delete"
+                    className="text-muted-foreground hover:text-destructive"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
               </div>
-              <Button variant="ghost" size="icon" onClick={() => onDelete(q.id)} disabled={pending}>
-                <Trash2 className="w-4 h-4" />
-              </Button>
-            </div>
-          ))
+            ),
+          )
         )}
+      </div>
+    </div>
+  );
+}
+
+function QueueItemEditor({
+  item,
+  pillarNames,
+  onSave,
+  onCancel,
+  pending,
+}: {
+  item: Queue;
+  pillarNames: string[];
+  onSave: (patch: { topic: string; pillar: string; format: string; notes: string }) => void;
+  onCancel: () => void;
+  pending: boolean;
+}) {
+  const [topic, setTopic] = useState(item.topic);
+  const [pillar, setPillar] = useState(item.pillar ?? "");
+  const [format, setFormat] = useState(item.format ?? "");
+  const [notes, setNotes] = useState(item.notes ?? "");
+
+  return (
+    <div className="space-y-2 border border-accent/40 rounded-lg p-3 bg-accent/[0.04]">
+      <Input placeholder="Topic" value={topic} onChange={(e) => setTopic(e.target.value)} autoFocus />
+      <div className="grid grid-cols-2 gap-2">
+        <Select value={pillar} onValueChange={setPillar}>
+          <SelectTrigger><SelectValue placeholder="Pillar (optional)" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">None</SelectItem>
+            {pillarNames.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={format} onValueChange={setFormat}>
+          <SelectTrigger><SelectValue placeholder="Format (optional)" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">Any</SelectItem>
+            {FORMAT_OPTIONS.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <Textarea rows={2} placeholder="Notes (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} />
+      <div className="flex gap-2 justify-end">
+        <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
+        <Button size="sm" onClick={() => onSave({ topic, pillar, format, notes })} disabled={pending}>
+          <Check className="w-3 h-3" /> Save
+        </Button>
       </div>
     </div>
   );

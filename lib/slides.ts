@@ -182,25 +182,48 @@ export const ICON_NAMES = Object.keys(ICONS);
 // ─── Slide builders ───────────────────────────────────────────
 export function renderCover(brand: Brand, s: CoverSlide): { w: number; h: number; html: string } {
   const w = 1080;
-  const h = s.size === "story" ? 1920 : 1350;
+  const isStory = s.size === "story";
+  const h = isStory ? 1920 : 1350;
   const c = brand.colors;
-  const badgeHtml = s.badge ? `<div class="bd bdg"><div class="dot dotg"></div>${s.badge}</div>` : "";
+
+  const badgeHtml = s.badge
+    ? `<div class="bd bdg" style="margin-top:16px;"><div class="dot dotg"></div>${s.badge}</div>`
+    : "";
+
   let statsHtml = "";
   if (s.stats?.length) {
     const items = s.stats
       .map(
         ([v, l]) =>
-          `<div><div style="font-size:44px;font-weight:800;color:${c.text};letter-spacing:-1px;">${v}</div><div class="mn" style="font-size:16px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-top:4px;">${l}</div></div>`
+          `<div><div style="font-size:44px;font-weight:800;color:${c.text};letter-spacing:-1px;">${v}</div><div class="mn" style="font-size:16px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-top:4px;">${l}</div></div>`,
       )
       .join("");
-    statsHtml = `<div style="display:flex;gap:48px;margin-top:48px;">${items}</div>`;
+    statsHtml = `<div style="display:flex;gap:48px;margin-top:${isStory ? "48px" : "48px"};">${items}</div>`;
   }
   const subHtml = s.sub
-    ? `<div class="dv"></div><div style="font-size:32px;color:#999;line-height:1.5;max-width:800px;">${s.sub}</div>`
+    ? `<div class="dv"></div><div style="font-size:${isStory ? "30" : "32"}px;color:#999;line-height:1.5;max-width:800px;">${s.sub}</div>`
     : "";
-  const fs = h > 1400 ? 88 : 76;
+
+  // Story uses a slightly larger headline since the canvas is taller.
+  const fs = isStory ? 96 : 76;
   const sw = s.swipe !== false ? '<div class="sw">Swipe →</div>' : "";
-  const body = `
+
+  // STORY layout: 3-row grid (top=logo, middle=content centered, bottom=spacer)
+  // FEED layout: original — content pinned to the bottom of the canvas
+  const body = isStory
+    ? `
+    <div class="orb ob" style="top:-100px;right:-80px;"></div>
+    <div class="orb og" style="bottom:150px;left:-100px;"></div>
+    <div class="c" style="justify-content:space-between;">
+      <div>${logo(brand)}${badgeHtml}</div>
+      <div style="margin-top:auto;margin-bottom:auto;">
+        <div style="font-size:${fs}px;font-weight:800;color:${c.text};line-height:1.05;letter-spacing:-3px;">${s.headline}</div>
+        ${subHtml}
+        ${statsHtml}
+      </div>
+      <div style="height:1px;"></div>
+    </div>${sw}`
+    : `
     <div class="orb ob" style="top:-100px;right:-80px;"></div>
     <div class="orb og" style="bottom:150px;left:-100px;"></div>
     <div class="c">${logo(brand)}${badgeHtml}
@@ -208,8 +231,9 @@ export function renderCover(brand: Brand, s: CoverSlide): { w: number; h: number
       ${subHtml}${statsHtml}
       <div style="margin-bottom:${s.stats ? "80px" : "0"};"></div>
     </div>${sw}`;
-  const pt = h > 1400 ? 260 : 72;
-  const pb = h > 1400 ? 280 : 72;
+
+  const pt = isStory ? 240 : 72;
+  const pb = isStory ? 280 : 72;
   return { w, h, html: baseHtml(brand, body, w, h, pt, pb) };
 }
 
