@@ -48,16 +48,18 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 
-# Prisma — schema + migrations + generated client + the prisma CLI binary
+# Prisma — schema + migrations + generated client + the CLI package.
+# We do NOT copy node_modules/.bin/prisma because Docker COPY dereferences
+# the symlink, producing a lone JS file that can't find its sibling wasm
+# (prisma_schema_build_bg.wasm) inside node_modules/prisma/build/.
+# Instead we invoke `node node_modules/prisma/build/index.js` directly.
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
-COPY --from=builder /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
 
 EXPOSE 3000
 
-# Default command runs migrations then starts the server. Override-able from
-# docker-compose.yml. Equivalent to:
-#   npx prisma migrate deploy && node server.js
-CMD ["sh", "-c", "npx prisma migrate deploy && node server.js"]
+# Migrate then start. Calling the prisma CLI by file path avoids the
+# .bin symlink dereferencing issue described above.
+CMD ["sh", "-c", "node node_modules/prisma/build/index.js migrate deploy && node server.js"]

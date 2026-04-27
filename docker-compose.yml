@@ -44,10 +44,12 @@ services:
       retries: 10
       start_period: 60s
     # Run pending migrations, then start the standalone Next.js server.
+    # Invoke prisma by path (not via .bin/prisma) — Docker COPY dereferences
+    # that symlink and breaks the wasm lookup in the runtime image.
     command:
       - sh
       - '-c'
-      - "npx prisma migrate deploy && node server.js"
+      - "node node_modules/prisma/build/index.js migrate deploy && node server.js"
 
 networks:
   coolify:
