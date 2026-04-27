@@ -11,9 +11,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl ca-certificates python3 build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy package manifests AND the Prisma schema before install — the
-# `postinstall` hook runs `prisma generate` and needs the schema present.
-COPY package.json pnpm-lock.yaml ./
+# Copy manifests, the Prisma schema, AND .npmrc before install:
+# - .npmrc declares `node-linker=hoisted` so node_modules is flat (npm-style)
+#   instead of pnpm's default symlink-into-`.pnpm/` layout. Without this,
+#   the multi-stage `COPY --from=builder /app/node_modules/.prisma` later
+#   resolves to a missing path (everything lives under .pnpm/).
+# - The `postinstall` hook runs `prisma generate` and needs the schema.
+COPY package.json pnpm-lock.yaml .npmrc ./
 COPY prisma ./prisma
 RUN pnpm install --frozen-lockfile --prod=false
 
