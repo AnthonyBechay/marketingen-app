@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { ArrowRight, Image as ImageIcon, Layers, Palette, Sparkles } from "lucide-react";
+import { ArrowRight, Image as ImageIcon, Layers, Palette, Sparkles, AlertTriangle } from "lucide-react";
 import { db } from "@/lib/db";
 import { requireProject } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { DeleteProjectButton } from "./_components/delete-project-button";
 
 export default async function ProjectOverview({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
@@ -91,6 +92,25 @@ export default async function ProjectOverview({ params }: { params: Promise<{ sl
             ))}
           </div>
         )}
+      </section>
+
+      <section className="pt-6 mt-6 border-t border-border/40">
+        <div className="card-surface p-6 border-destructive/30 bg-destructive/[0.03]">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-destructive/15 border border-destructive/30 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-4 h-4 text-destructive" />
+              </div>
+              <div>
+                <h2 className="font-semibold mb-1">Danger zone</h2>
+                <p className="text-sm text-muted-foreground">
+                  Permanently delete this project, its brand, campaign, idea queue, and all generated posts. R2 files under the project prefix are also removed.
+                </p>
+              </div>
+            </div>
+            <DeleteProjectButton projectId={project.id} projectName={project.name} />
+          </div>
+        </div>
       </section>
     </div>
   );

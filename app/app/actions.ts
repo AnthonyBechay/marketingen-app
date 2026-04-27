@@ -9,6 +9,7 @@ import { slugify } from "@/lib/utils";
 import { defaultBrand, defaultCampaign } from "@/lib/defaults";
 import { isAdmin } from "@/lib/admin";
 import { BECHAI_BRAND, BECHAI_CAMPAIGN, BECHAI_QUEUE } from "@/lib/seed-bechai";
+import { deletePrefix, projectPrefix } from "@/lib/r2";
 
 const newProjectSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters").max(64),
@@ -40,12 +41,45 @@ export async function createProjectAction(_prev: unknown, formData: FormData) {
   redirect(`/app/${project.slug}`);
 }
 
-export async function deleteProjectAction(formData: FormData) {
+/**
+ * Delete a project — DB cascades remove the brand, campaign, queue items,
+ * and posts automatically (see schema.prisma onDelete: Cascade). On top of
+ * that we also clean up any R2 objects under the project's prefix
+ * (slides + uploaded logos). Best-effort: a failed R2 cleanup logs a
+ * warning but does not block the DB delete.
+ *
+ * Returns { ok } | { error }. Client navigates after success.
+ */
+export async function deleteProjectAction(
+  projectId: string,
+): Promise<{ ok: true } | { error: string }> {
   const user = await requireUser();
-  const id = formData.get("id") as string;
-  await db.project.deleteMany({ where: { id, userId: user.id } });
+
+  // Confirm ownership before doing anything destructive.
+  const project = await db.project.findFirst({
+    where: { id: projectId, userId: user.id },
+    select: { id: true },
+  });
+  if (!project) return { error: "Project not found" };
+
+  // R2 cleanup first — if the DB delete fails after, we want orphaned objects
+  // (recoverable) rather than dangling references in the DB.
+  try {
+    await deletePrefix(`${projectPrefix(user.id, project.id)}/`);
+  } catch (e) {
+    console.error("R2 cleanup failed during project delete:", e);
+    // Non-fatal — continue with DB delete.
+  }
+
+  try {
+    await db.project.delete({ where: { id: project.id } });
+  } catch (e) {
+    console.error("Project DB delete failed:", e);
+    return { error: `Could not delete project: ${(e as Error).message}` };
+  }
+
   revalidatePath("/app");
-  redirect("/app");
+  return { ok: true };
 }
 
 /**
