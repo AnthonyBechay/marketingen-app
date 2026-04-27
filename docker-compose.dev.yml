@@ -1,0 +1,22 @@
+# Local development: just Postgres. Run the Next.js app on the host.
+#
+#   docker compose -f docker-compose.dev.yml up -d
+#   pnpm db:migrate
+#   pnpm dev
+#
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: marketingen-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: marketingen
+      POSTGRES_PASSWORD: marketingen
+      POSTGRES_DB: marketingen
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

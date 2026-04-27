@@ -1,33 +1,54 @@
-# Local-dev compose. For Coolify, point it at this repo and set env vars in the UI.
+# ─────────────────────────────────────────────────────────────────
+# Production / Coolify deploy.
+#
+# Assumes:
+#   - Postgres lives elsewhere (your Hetzner server). Pass DATABASE_URL.
+#   - The `coolify` network exists (Coolify creates it).
+#   - Coolify's reverse proxy handles port mapping (no `ports:` here).
+#
+# Set these env vars in the Coolify UI:
+#   DATABASE_URL, ANTHROPIC_API_KEY, R2_ACCOUNT_ID, R2_ACCESS_KEY_ID,
+#   R2_SECRET_ACCESS_KEY, R2_BUCKET, R2_PUBLIC_URL
+#   (Optional) ANTHROPIC_MODEL — defaults to claude-sonnet-4-5.
+#
+# For local dev with a containerized Postgres, use docker-compose.dev.yml.
+# ─────────────────────────────────────────────────────────────────
 services:
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: marketingen
-      POSTGRES_PASSWORD: marketingen
-      POSTGRES_DB: marketingen
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
-    depends_on:
-      - postgres
     environment:
-      DATABASE_URL: postgresql://marketingen:marketingen@postgres:5432/marketingen
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      ANTHROPIC_MODEL: claude-sonnet-4-5
-      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID}
-      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
-      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
-      R2_BUCKET: ${R2_BUCKET}
-      R2_PUBLIC_URL: ${R2_PUBLIC_URL}
-    ports:
-      - "3000:3000"
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      DATABASE_URL: '${DATABASE_URL}'
+      ANTHROPIC_API_KEY: '${ANTHROPIC_API_KEY}'
+      ANTHROPIC_MODEL: '${ANTHROPIC_MODEL:-claude-sonnet-4-5}'
+      R2_ACCOUNT_ID: '${R2_ACCOUNT_ID}'
+      R2_ACCESS_KEY_ID: '${R2_ACCESS_KEY_ID}'
+      R2_SECRET_ACCESS_KEY: '${R2_SECRET_ACCESS_KEY}'
+      R2_BUCKET: '${R2_BUCKET}'
+      R2_PUBLIC_URL: '${R2_PUBLIC_URL}'
+    networks:
+      - coolify
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - '-e'
+        - "require('http').get('http://localhost:3000/api/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    # Run pending migrations, then start the standalone Next.js server.
+    command:
+      - sh
+      - '-c'
+      - "npx prisma migrate deploy && node server.js"
 
-volumes:
-  pgdata:
+networks:
+  coolify:
+    external: true

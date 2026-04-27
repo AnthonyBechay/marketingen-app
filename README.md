@@ -49,50 +49,48 @@ For Playwright to render slides locally, install Chromium once:
 pnpm exec playwright install chromium
 ```
 
-### With Docker (full stack: app + Postgres)
+### Local Postgres in a container
 
 ```bash
-cp .env.example .env             # docker-compose reads root .env
-docker compose up --build
+cp .env.example .env.local       # fill in ANTHROPIC_API_KEY and R2_*
+docker compose -f docker-compose.dev.yml up -d   # just Postgres
+pnpm db:migrate
+pnpm dev
 ```
 
-The app runs on `http://localhost:3000`; Postgres is exposed on `5432`. Migrations run automatically via the entrypoint.
+App on `localhost:3000`, Postgres on `localhost:5432`.
 
 ---
 
 ## Deploying to Coolify
 
-This repo is built to run as a single Docker image. The Dockerfile:
-
-- Builds Next.js with `output: "standalone"` for a tiny runtime.
-- Uses the official `mcr.microsoft.com/playwright` runtime image so Chromium is preinstalled — no flaky `playwright install` at boot.
-- Runs `prisma migrate deploy` automatically on container start.
+This repo follows the same pattern as PropGroup and Mozuk: external Postgres on your Hetzner server, app on the `coolify` network, no `ports:` exposed (Coolify's reverse proxy handles it), migrations chained into the compose `command:`.
 
 ### Steps
 
-1. **Postgres** — create a Postgres service in Coolify (or bring your own). Note the connection string.
-2. **R2 bucket** — in Cloudflare:
+1. **Postgres** — already on your Hetzner server (or create a Coolify Postgres service). Just need the connection string.
+2. **R2 bucket** in Cloudflare:
    - Create a bucket (e.g. `marketingen`).
-   - In _Settings_, enable public access (gives you a `pub-xxxxx.r2.dev` URL) **or** attach a custom domain.
-   - In _Manage R2 API tokens_, create an _Object Read & Write_ token scoped to the bucket. Save the access key + secret + your account ID.
-3. **New Application in Coolify**, point at this GitHub repo, select Dockerfile build.
-4. **Environment variables** (set in Coolify UI):
+   - In bucket _Settings_, enable public access (gives you a `pub-xxxxx.r2.dev` URL) **or** attach a custom domain.
+   - In _Manage R2 API tokens_, create an _Object Read & Write_ token scoped to the bucket.
+3. **New Application in Coolify**, point at https://github.com/AnthonyBechay/marketingen-app, build pack = Docker Compose.
+4. **Environment variables** in the Coolify UI:
 
    | Var | Example |
    |---|---|
-   | `DATABASE_URL` | `postgresql://user:pw@postgres:5432/marketingen` |
+   | `DATABASE_URL` | `postgresql://user:pw@your-hetzner-host:5432/marketingen` |
    | `ANTHROPIC_API_KEY` | `sk-ant-...` |
-   | `ANTHROPIC_MODEL` | `claude-sonnet-4-5` |
+   | `ANTHROPIC_MODEL` | `claude-sonnet-4-5` (optional, defaults to this) |
    | `R2_ACCOUNT_ID` | your Cloudflare account id |
    | `R2_ACCESS_KEY_ID` | from the R2 token |
    | `R2_SECRET_ACCESS_KEY` | from the R2 token |
    | `R2_BUCKET` | `marketingen` |
    | `R2_PUBLIC_URL` | `https://pub-xxxxx.r2.dev` (or your custom domain) |
 
-5. **Port** — `3000`.
-6. Deploy. The first boot runs migrations; the `/register` page is live.
+5. **Domain** — point your domain at the app in Coolify's UI. The container exposes port 3000; Coolify does the rest.
+6. Deploy. The compose `command:` runs `prisma migrate deploy` then starts the server. The `/api/health` endpoint backs the healthcheck.
 
-That's it. Subsequent pushes auto-deploy.
+Subsequent pushes auto-deploy.
 
 ---
 
