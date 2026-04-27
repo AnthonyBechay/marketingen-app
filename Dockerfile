@@ -11,17 +11,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl ca-certificates python3 build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy package manifests AND the Prisma schema before install — the
+# `postinstall` hook runs `prisma generate` and needs the schema present.
 COPY package.json pnpm-lock.yaml ./
+COPY prisma ./prisma
 RUN pnpm install --frozen-lockfile --prod=false
 
+# Now copy the rest of the source.
 COPY . .
-
-RUN pnpm prisma generate
 
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm build
 
-RUN pnpm prune --prod
+# Note: we deliberately do NOT run `pnpm prune --prod` because we need the
+# `prisma` CLI (a devDependency) at runtime for `migrate deploy`. The
+# standalone Next.js output already bundles only prod deps so the
+# runtime image stays slim.
 
 # ─── Stage 2: Runtime ───────────────────────────────────────────
 # Microsoft Playwright runtime — Chromium + system deps preinstalled.
