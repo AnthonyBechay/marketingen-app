@@ -4,7 +4,9 @@ import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { CreateProjectDialog } from "./_components/create-project-dialog";
+import { SeedBechaiButton } from "./_components/seed-bechai-button";
 import { formatDate } from "@/lib/utils";
+import { isAdmin } from "@/lib/admin";
 
 export default async function ProjectsPage() {
   const user = await requireUser();
@@ -24,7 +26,10 @@ export default async function ProjectsPage() {
             One project per brand. Each has its own brand identity, campaign queue, and post history.
           </p>
         </div>
-        <CreateProjectDialog />
+        <div className="flex items-center gap-2">
+          {isAdmin(user.email) && <SeedBechaiButton />}
+          <CreateProjectDialog />
+        </div>
       </div>
 
       {projects.length === 0 ? (

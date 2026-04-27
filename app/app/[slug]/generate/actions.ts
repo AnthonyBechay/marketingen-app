@@ -12,11 +12,12 @@ import { type Brand } from "@/lib/slides";
 import { slugify } from "@/lib/utils";
 
 async function buildContext(slug: string): Promise<{
+  userId: string;
   projectId: string;
   brand: Brand;
   ctx: GenContext;
 }> {
-  const { project } = await requireProject(slug);
+  const { user, project } = await requireProject(slug);
   const [brand, campaign, recent] = await Promise.all([
     db.brand.findUnique({ where: { projectId: project.id } }),
     db.campaign.findUnique({ where: { projectId: project.id } }),
@@ -32,6 +33,7 @@ async function buildContext(slug: string): Promise<{
   const renderBrand: Brand = {
     name: brand.name,
     logoSvg: brand.logoSvg,
+    logoImageUrl: brand.logoImageUrl,
     logoTextBefore: brand.logoTextBefore,
     logoTextHighlight: brand.logoTextHighlight,
     logoTextAfter: brand.logoTextAfter,
@@ -60,7 +62,7 @@ async function buildContext(slug: string): Promise<{
     recent,
   };
 
-  return { projectId: project.id, brand: renderBrand, ctx };
+  return { userId: user.id, projectId: project.id, brand: renderBrand, ctx };
 }
 
 async function uniqueName(projectId: string, base: string): Promise<string> {
@@ -77,7 +79,7 @@ const ideaSchema = z.string().min(3).max(2000);
 export async function generateFromIdeaAction(slug: string, idea: string) {
   const parsed = ideaSchema.safeParse(idea);
   if (!parsed.success) return { error: "Topic must be 3–2000 characters" };
-  const { projectId, brand, ctx } = await buildContext(slug);
+  const { userId, projectId, brand, ctx } = await buildContext(slug);
 
   let post;
   try {
@@ -89,7 +91,7 @@ export async function generateFromIdeaAction(slug: string, idea: string) {
 
   let urls: string[];
   try {
-    urls = await renderAndUploadPost({ brand, projectId, postName: name, slides: post.slides });
+    urls = await renderAndUploadPost({ brand, userId, projectId, postName: name, slides: post.slides });
   } catch (e) {
     return { error: `Render failed: ${(e as Error).message}` };
   }
@@ -120,7 +122,7 @@ export async function generateFromQueueAction(slug: string) {
   });
   if (!next) return { error: "Queue is empty" };
 
-  const { projectId, brand, ctx } = await buildContext(slug);
+  const { userId, projectId, brand, ctx } = await buildContext(slug);
 
   let post;
   try {
@@ -136,7 +138,7 @@ export async function generateFromQueueAction(slug: string) {
 
   let urls: string[];
   try {
-    urls = await renderAndUploadPost({ brand, projectId, postName: name, slides: post.slides });
+    urls = await renderAndUploadPost({ brand, userId, projectId, postName: name, slides: post.slides });
   } catch (e) {
     return { error: `Render failed: ${(e as Error).message}` };
   }

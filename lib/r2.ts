@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, DeleteObjectsCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 
 let _client: S3Client | null = null;
 
@@ -32,17 +32,62 @@ export function r2PublicBaseUrl() {
   return base.replace(/\/+$/, "");
 }
 
-export async function uploadPng(key: string, body: Buffer): Promise<string> {
+// ─── Path scheme ──────────────────────────────────────────────
+//
+// Everything is namespaced under the user and project so the bucket
+// stays organized when browsed in the Cloudflare dashboard.
+//
+//   users/{userId}/projects/{projectId}/posts/{postName}/{file}.png
+//   users/{userId}/projects/{projectId}/brand/logo-{timestamp}.{ext}
+
+export function projectPrefix(userId: string, projectId: string) {
+  return `users/${userId}/projects/${projectId}`;
+}
+
+export function postPrefix(userId: string, projectId: string, postName: string) {
+  return `${projectPrefix(userId, projectId)}/posts/${postName}`;
+}
+
+export function r2KeyForSlide(
+  userId: string,
+  projectId: string,
+  postName: string,
+  idx: number,
+  total: number,
+) {
+  const fname =
+    total === 1
+      ? `${postName}.png`
+      : `${postName}-slide-${String(idx + 1).padStart(2, "0")}.png`;
+  return `${postPrefix(userId, projectId, postName)}/${fname}`;
+}
+
+export function r2KeyForLogo(userId: string, projectId: string, ext: string) {
+  return `${projectPrefix(userId, projectId)}/brand/logo-${Date.now()}.${ext.replace(/^\./, "")}`;
+}
+
+// ─── Upload / delete helpers ──────────────────────────────────
+
+export async function uploadObject(
+  key: string,
+  body: Buffer,
+  contentType: string,
+  cacheControl = "public, max-age=31536000, immutable",
+): Promise<string> {
   await r2().send(
     new PutObjectCommand({
       Bucket: r2Bucket(),
       Key: key,
       Body: body,
-      ContentType: "image/png",
-      CacheControl: "public, max-age=31536000, immutable",
-    })
+      ContentType: contentType,
+      CacheControl: cacheControl,
+    }),
   );
   return `${r2PublicBaseUrl()}/${key}`;
+}
+
+export async function uploadPng(key: string, body: Buffer): Promise<string> {
+  return uploadObject(key, body, "image/png");
 }
 
 export async function deleteKeys(keys: string[]) {
@@ -51,15 +96,14 @@ export async function deleteKeys(keys: string[]) {
     new DeleteObjectsCommand({
       Bucket: r2Bucket(),
       Delete: { Objects: keys.map((Key) => ({ Key })) },
-    })
+    }),
   );
 }
 
-export function r2KeyForSlide(projectId: string, postName: string, idx: number, total: number) {
-  const fname = total === 1 ? `${postName}.png` : `${postName}-slide-${String(idx + 1).padStart(2, "0")}.png`;
-  return `projects/${projectId}/posts/${postName}/${fname}`;
-}
-
-export function r2KeyPrefixForPost(projectId: string, postName: string) {
-  return `projects/${projectId}/posts/${postName}/`;
+export async function deletePrefix(prefix: string) {
+  const list = await r2().send(
+    new ListObjectsV2Command({ Bucket: r2Bucket(), Prefix: prefix }),
+  );
+  const keys = (list.Contents ?? []).map((o) => o.Key).filter((k): k is string => Boolean(k));
+  if (keys.length) await deleteKeys(keys);
 }

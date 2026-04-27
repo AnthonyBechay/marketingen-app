@@ -4,6 +4,7 @@
 export type Brand = {
   name: string;
   logoSvg: string; // contains {size} placeholder
+  logoImageUrl?: string | null; // takes precedence over logoSvg if set
   logoTextBefore: string;
   logoTextHighlight: string;
   logoTextAfter: string;
@@ -18,6 +19,14 @@ export type Brand = {
   };
   fonts: { sans: string; mono: string; googleFontsUrl: string };
 };
+
+/** Render the logo as either an <img> (if uploaded) or inline SVG. */
+function logoMarkup(brand: Brand, size: number): string {
+  if (brand.logoImageUrl) {
+    return `<img src="${brand.logoImageUrl}" width="${size}" height="${size}" style="object-fit:contain;display:block;" alt="${brand.name}"/>`;
+  }
+  return brand.logoSvg.replace(/\{size\}/g, String(size));
+}
 
 const GRAIN =
   'url("data:image/svg+xml,%3Csvg viewBox=\'0 0 256 256\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cfilter id=\'n\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'0.9\' numOctaves=\'4\' stitchTiles=\'stitch\'/%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23n)\' opacity=\'0.06\'/%3E%3C/svg%3E")';
@@ -64,8 +73,7 @@ body::after{content:'';position:absolute;inset:0;background:${GRAIN};pointer-eve
 }
 
 function logo(brand: Brand, size = 40) {
-  const svg = brand.logoSvg.replace(/\{size\}/g, String(size));
-  return `<div class="lr">${svg}<div class="lt">${brand.logoTextBefore}<span>${brand.logoTextHighlight}</span>${brand.logoTextAfter}</div></div>`;
+  return `<div class="lr">${logoMarkup(brand, size)}<div class="lt">${brand.logoTextBefore}<span>${brand.logoTextHighlight}</span>${brand.logoTextAfter}</div></div>`;
 }
 
 // ─── Slide spec types ─────────────────────────────────────────
@@ -270,7 +278,7 @@ export function renderCta(brand: Brand, s: CtaSlide) {
     <div class="orb ob" style="top:-120px;left:50%;transform:translateX(-50%);width:500px;height:500px;"></div>
     <div class="orb og" style="bottom:-80px;right:-60px;"></div>
     <div class="c" style="justify-content:center;align-items:center;text-align:center;">
-      <div style="margin-bottom:48px;">${brand.logoSvg.replace(/\{size\}/g, "48")}</div>
+      <div style="margin-bottom:48px;">${logoMarkup(brand, 48)}</div>
       <div style="font-size:${h > 1400 ? "72" : "64"}px;font-weight:800;color:${c.text};letter-spacing:-2px;line-height:1.15;margin-bottom:24px;">${s.headline}</div>
       ${subHtml}
       <div class="bt btb" style="font-size:30px;padding:24px 56px;">${button}</div>

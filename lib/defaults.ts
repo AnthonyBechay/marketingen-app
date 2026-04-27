@@ -1,61 +1,71 @@
 // Default values when a new project is created.
+// All values are intentionally NEUTRAL — no bechai-specific branding.
+// Users fill these in via the Brand editor (or click "Seed bechai.ai"
+// if they're the admin).
+
 import type { Prisma } from "@prisma/client";
 
-export const DEFAULT_LOGO_SVG = `<svg width="{size}" height="{size}" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="32" height="32" fill="#030712" rx="4"/>
-  <rect x="6" y="4" width="4" height="24" rx="0.5" fill="white"/>
-  <path d="M12 6 H 20 C 23.3 6 26 8.7 26 12 C 26 14.2 24.8 16 23 17" stroke="#3b82f6" stroke-width="3" stroke-linecap="round"/>
-  <path d="M12 26 H 20 C 23.3 26 26 23.3 26 20 C 26 18.5 25 17.5 24 17" stroke="#10b981" stroke-width="3" stroke-linecap="round"/>
-  <circle cx="26" cy="12" r="1.5" fill="white"/>
-  <circle cx="26" cy="20" r="1.5" fill="white"/>
+/**
+ * Generate a placeholder SVG monogram from the project name's first letter.
+ * Renders as a rounded dark square with a single white initial — works as a
+ * functional logo until the user uploads or pastes their real one.
+ */
+export function placeholderLogoSvg(projectName: string): string {
+  const letter = (projectName.trim()[0] || "M").toUpperCase();
+  return `<svg width="{size}" height="{size}" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="32" height="32" rx="6" fill="#1e293b"/>
+  <text x="16" y="22" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" font-weight="700" text-anchor="middle" fill="white">${letter}</text>
 </svg>`;
+}
 
-export const DEFAULT_COLORS = {
-  bg: "#030712",
-  primary: "#3b82f6",
-  secondary: "#10b981",
+export const NEUTRAL_COLORS = {
+  bg: "#0f172a",        // slate-900 — neutral dark
+  primary: "#3b82f6",   // blue-500 — generic accent
+  secondary: "#64748b", // slate-500 — neutral second accent
   alert: "#ef4444",
   text: "#ffffff",
-  muted: "#999999",
-  dim: "#666666",
+  muted: "#94a3b8",     // slate-400
+  dim: "#64748b",
 };
 
-export const DEFAULT_FONTS = {
-  sans: "Plus Jakarta Sans",
+export const NEUTRAL_FONTS = {
+  sans: "Inter",
   mono: "JetBrains Mono",
   googleFontsUrl:
-    "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap",
+    "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap",
 };
 
 export function defaultBrand(name: string): Prisma.BrandUncheckedCreateWithoutProjectInput {
-  const cleanName = name.toLowerCase().replace(/\s+/g, "");
+  // Logo text uses the project name as a sensible starting word, but the
+  // user can split it into "before / highlight / after" however they like.
+  const cleaned = name.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
   return {
     name,
     tagline: "",
     domain: "",
-    logoSvg: DEFAULT_LOGO_SVG,
-    logoTextBefore: cleanName.slice(0, Math.max(1, cleanName.length - 3)) || "brand",
-    logoTextHighlight: cleanName.slice(-3) || "ai",
+    logoSvg: placeholderLogoSvg(name),
+    logoImageUrl: null,
+    logoTextBefore: cleaned || "your",
+    logoTextHighlight: "",
     logoTextAfter: "",
-    colors: DEFAULT_COLORS,
-    fonts: DEFAULT_FONTS,
-    voice:
-      "Direct, confident, no fluff. Use real numbers when relevant. Sound like someone who builds great work, not someone selling a course.",
+    colors: NEUTRAL_COLORS,
+    fonts: NEUTRAL_FONTS,
+    voice: "",
     audience: "",
     anchors: {},
-    hashtagPool: ["#YourBrand"],
-    ctaDefault: "DM me or link in bio →",
+    hashtagPool: [],
+    ctaDefault: "Learn more →",
   };
 }
 
 export function defaultCampaign(): Prisma.CampaignUncheckedCreateWithoutProjectInput {
   return {
-    name: "Launch campaign",
+    name: "",
     goal: "",
     audience: "",
     frequency: "3 posts/week",
     formatMix:
-      "Roughly: 60% carousels (5-8 slides) for value/education, 25% single-image stories for hooks, 15% case studies.",
+      "Roughly: 60% carousels for value/education, 25% single-image stories for hooks, 15% case studies.",
     pillars: [
       { name: "Value", description: "What you offer. Pricing transparency." },
       { name: "Proof", description: "Case studies of real shipped work." },

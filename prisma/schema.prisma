@@ -56,6 +56,7 @@ model Brand {
   tagline      String?
   domain       String?
   logoSvg      String   @db.Text // raw SVG, may include {size} placeholder
+  logoImageUrl String?  // optional uploaded raster/svg image URL (R2). Takes precedence over logoSvg in renders.
   logoTextBefore    String  @default("brand")
   logoTextHighlight String  @default("name")
   logoTextAfter     String  @default(".com")

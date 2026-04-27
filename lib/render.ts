@@ -14,11 +14,13 @@ async function getBrowser(): Promise<Browser> {
 
 export async function renderAndUploadPost({
   brand,
+  userId,
   projectId,
   postName,
   slides,
 }: {
   brand: Brand;
+  userId: string;
   projectId: string;
   postName: string;
   slides: Slide[];
@@ -32,8 +34,11 @@ export async function renderAndUploadPost({
     try {
       await page.setContent(html, { waitUntil: "networkidle" });
       await page.waitForTimeout(700);
-      const buf = await page.screenshot({ type: "png", clip: { x: 0, y: 0, width: w, height: h } });
-      const key = r2KeyForSlide(projectId, postName, i, slides.length);
+      const buf = await page.screenshot({
+        type: "png",
+        clip: { x: 0, y: 0, width: w, height: h },
+      });
+      const key = r2KeyForSlide(userId, projectId, postName, i, slides.length);
       const url = await uploadPng(key, Buffer.from(buf));
       urls.push(url);
     } finally {
