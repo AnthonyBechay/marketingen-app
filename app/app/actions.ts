@@ -50,43 +50,54 @@ export async function deleteProjectAction(formData: FormData) {
 
 /**
  * Admin-only: provisions a complete bechai.ai project with brand, campaign,
- * tone rules, and a 20-post idea queue. Will not overwrite if a project
- * with slug "bechai-ai" already exists for this user — instead it just
- * returns a redirect to it.
+ * tone rules, and a 20-post idea queue. Idempotent: if a project with
+ * slug "bechai-ai" already exists for this user, returns its slug
+ * instead of creating a duplicate.
+ *
+ * Returns { ok, slug } on success or { error } on failure. The client
+ * navigates after success — we don't `redirect()` here because button-
+ * triggered server actions in Next 16 don't always honor it cleanly.
  */
-export async function seedBechaiAction() {
+export async function seedBechaiAction(): Promise<
+  { ok: true; slug: string; created: boolean } | { error: string }
+> {
   const user = await requireUser();
   if (!isAdmin(user.email)) {
     return { error: "Not authorized" };
   }
 
   const baseSlug = "bechai-ai";
+
   const existing = await db.project.findUnique({
     where: { userId_slug: { userId: user.id, slug: baseSlug } },
   });
   if (existing) {
-    redirect(`/app/${existing.slug}`);
+    return { ok: true, slug: existing.slug, created: false };
   }
 
-  const project = await db.project.create({
-    data: {
-      userId: user.id,
-      name: BECHAI_BRAND.name,
-      slug: baseSlug,
-      brand: { create: BECHAI_BRAND },
-      campaign: { create: BECHAI_CAMPAIGN },
-      queueItems: {
-        create: BECHAI_QUEUE.map((item, position) => ({
-          topic: item.topic,
-          pillar: item.pillar,
-          format: item.format,
-          notes: item.notes,
-          position,
-        })),
+  try {
+    const project = await db.project.create({
+      data: {
+        userId: user.id,
+        name: BECHAI_BRAND.name,
+        slug: baseSlug,
+        brand: { create: BECHAI_BRAND },
+        campaign: { create: BECHAI_CAMPAIGN },
+        queueItems: {
+          create: BECHAI_QUEUE.map((item, position) => ({
+            topic: item.topic,
+            pillar: item.pillar,
+            format: item.format,
+            notes: item.notes,
+            position,
+          })),
+        },
       },
-    },
-  });
-
-  revalidatePath("/app");
-  redirect(`/app/${project.slug}`);
+    });
+    revalidatePath("/app");
+    return { ok: true, slug: project.slug, created: true };
+  } catch (e) {
+    console.error("seedBechaiAction failed:", e);
+    return { error: `Seed failed: ${(e as Error).message}` };
+  }
 }

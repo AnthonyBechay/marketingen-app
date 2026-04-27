@@ -1,5 +1,6 @@
 "use client";
 import { useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -7,13 +8,29 @@ import { seedBechaiAction } from "../actions";
 
 export function SeedBechaiButton() {
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
+
   function onClick() {
     startTransition(async () => {
-      const res = await seedBechaiAction();
-      // Success path redirects, so any return is an error.
-      if (res?.error) toast.error(res.error);
+      try {
+        const res = await seedBechaiAction();
+        if ("error" in res) {
+          toast.error(res.error);
+          return;
+        }
+        toast.success(
+          res.created
+            ? "bechai.ai project seeded with brand, campaign, and 20-post queue"
+            : "bechai.ai project already exists — opening it",
+        );
+        router.push(`/app/${res.slug}`);
+        router.refresh();
+      } catch (e) {
+        toast.error(`Unexpected error: ${(e as Error).message}`);
+      }
     });
   }
+
   return (
     <Button variant="outline" onClick={onClick} disabled={pending}>
       <Sparkles className="w-4 h-4" />

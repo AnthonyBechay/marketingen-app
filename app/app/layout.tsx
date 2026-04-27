@@ -1,14 +1,6 @@
 import Link from "next/link";
-import { LogOut } from "lucide-react";
-import { logoutAction } from "../(auth)/actions";
 import { requireUser } from "@/lib/auth";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Button } from "@/components/ui/button";
+import { UserMenu } from "./_components/user-menu";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
@@ -21,22 +13,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <span className="accent-text">en</span>
           </Link>
         </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="font-mono text-xs">
-              {user.email}
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <form action={logoutAction}>
-              <DropdownMenuItem asChild>
-                <button type="submit" className="w-full text-left flex items-center gap-2">
-                  <LogOut className="w-4 h-4" /> Sign out
-                </button>
-              </DropdownMenuItem>
-            </form>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <UserMenu email={user.email} />
       </header>
       <main className="flex-1">{children}</main>
     </div>
