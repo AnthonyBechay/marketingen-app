@@ -43,20 +43,21 @@ ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Standalone output
+# Standalone Next.js output (server.js + a minimal traced node_modules).
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 
-# Prisma — schema + migrations + generated client + the CLI package.
-# We do NOT copy node_modules/.bin/prisma because Docker COPY dereferences
-# the symlink, producing a lone JS file that can't find its sibling wasm
-# (prisma_schema_build_bg.wasm) inside node_modules/prisma/build/.
-# Instead we invoke `node node_modules/prisma/build/index.js` directly.
+# Prisma schema + migrations.
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
+
+# Override the slim standalone node_modules with the full hoisted one
+# from the builder. We tried cherry-picking @prisma/, .prisma/, prisma/
+# but the prisma CLI needs additional transitive deps (effect, …) that
+# don't live in those folders. Copying the whole tree is the simplest
+# robust fix; Playwright's base image is already ~1.5 GB so the extra
+# weight is rounding error.
+COPY --from=builder /app/node_modules ./node_modules
 
 EXPOSE 3000
 
