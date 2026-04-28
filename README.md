@@ -94,6 +94,83 @@ Subsequent pushes auto-deploy.
 
 ---
 
+## Instagram auto-publishing
+
+Each project can be linked to one Instagram Business / Creator account
+through Meta's Graph API. Once connected, scheduled posts publish
+automatically and you also get a one-click "Post to IG now" button per post.
+
+### One-time Meta app setup
+
+1. Go to https://developers.facebook.com/apps and create a new app
+   (type: **Business**).
+2. Add the **Instagram Graph API** product to the app.
+3. In the app's **App Roles → Roles** add yourself as a developer (and any
+   other team members). While the app is in Development mode, only these
+   accounts can connect.
+4. Under **Use cases → Instagram → Customize**, request the scopes:
+   `instagram_basic`, `instagram_content_publish`, `pages_show_list`,
+   `pages_read_engagement`, `business_management`.
+5. Under **Settings → Basic**, copy the **App ID** and **App Secret**.
+6. Under **Facebook Login for Business → Settings → Valid OAuth Redirect URIs**,
+   add `https://YOUR-DOMAIN/api/instagram/callback`.
+7. The Instagram account you're connecting **must be a Business or Creator
+   account** and **linked to a Facebook Page**. If yours isn't, switch
+   it under Instagram → Settings → Account type.
+
+### Env vars
+
+| Var | Value |
+|---|---|
+| `META_APP_ID` | from app Settings → Basic |
+| `META_APP_SECRET` | from app Settings → Basic |
+| `META_REDIRECT_URI` | `https://YOUR-DOMAIN/api/instagram/callback` |
+| `SESSION_SECRET` | random 32+ char string (signs OAuth state) |
+| `CRON_SECRET` | random 32+ char string (auths the publish-scheduled cron) |
+
+### Scheduling cron
+
+The `/api/cron/publish-scheduled` endpoint scans for posts that are due
+(`status="scheduled"` AND `scheduledFor <= NOW()`), publishes each via
+the Graph API, and updates status. Schedule a job to hit it every minute.
+
+**In Coolify** (recommended):
+
+1. New Resource → **Scheduled Task**
+2. Command:
+   ```
+   curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" \
+        https://YOUR-DOMAIN/api/cron/publish-scheduled
+   ```
+3. Schedule: `* * * * *` (every minute)
+4. Set the same `CRON_SECRET` env var on the task.
+
+**External cron** (alternative): cron-job.org is free and works well —
+add `?secret=$CRON_SECRET` to the URL or use the Authorization header.
+
+### What can be published
+
+| Format | API path | Notes |
+|---|---|---|
+| `single` | IMAGE container | Single 1080×1350 feed post |
+| `carousel` | IMAGE children + CAROUSEL container | 2–10 slides; IG hard caps at 10 |
+| `case-study` | Same as carousel | Same flow with multiple slides |
+| `story` | STORIES container | Single image; no stickers/links via API |
+
+Image URLs are fetched directly from your R2 public URL by Meta's
+servers, so R2 must remain publicly accessible (it already is).
+
+### Token lifecycle
+
+- After OAuth, we store a **long-lived (60-day) Page access token**.
+- Each publish attempt opportunistically refreshes the token if it has
+  less than 7 days left, so a steady cadence of posts keeps the
+  connection alive forever.
+- If the token expires anyway, the connection card on the project page
+  shows the error and a "Reconnect" button.
+
+---
+
 ## How the AI generation works (short version)
 
 For each post, the system prompt sent to Claude includes:

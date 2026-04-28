@@ -10,8 +10,20 @@ export default async function PostDetailPage({
 }) {
   const { slug, id } = await params;
   const { project } = await requireProject(slug);
-  const post = await db.post.findFirst({ where: { id, projectId: project.id } });
+  const [post, ig] = await Promise.all([
+    db.post.findFirst({ where: { id, projectId: project.id } }),
+    db.instagramConnection.findUnique({
+      where: { projectId: project.id },
+      select: { id: true },
+    }),
+  ]);
   if (!post) notFound();
 
-  return <PostView slug={slug} post={JSON.parse(JSON.stringify(post))} />;
+  return (
+    <PostView
+      slug={slug}
+      igConnected={!!ig}
+      post={JSON.parse(JSON.stringify(post))}
+    />
+  );
 }

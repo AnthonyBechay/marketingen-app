@@ -5,10 +5,37 @@ import { requireProject } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DeleteProjectButton } from "./_components/delete-project-button";
+import { InstagramCard, type IgConnectionPublic } from "./_components/instagram-card";
+import { IgFlashToast } from "./_components/ig-flash-toast";
 
-export default async function ProjectOverview({ params }: { params: Promise<{ slug: string }> }) {
+export default async function ProjectOverview({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ ig_connected?: string; ig_error?: string }>;
+}) {
   const { slug } = await params;
+  const sp = await searchParams;
   const { project } = await requireProject(slug);
+
+  const igConn = await db.instagramConnection.findUnique({
+    where: { projectId: project.id },
+    select: {
+      igUsername: true,
+      pageName: true,
+      tokenExpiresAt: true,
+      lastError: true,
+    },
+  });
+  const connection: IgConnectionPublic = igConn
+    ? {
+        igUsername: igConn.igUsername,
+        pageName: igConn.pageName,
+        tokenExpiresAt: igConn.tokenExpiresAt.toISOString(),
+        lastError: igConn.lastError,
+      }
+    : null;
 
   const [posted, drafts, queued] = await Promise.all([
     db.post.count({ where: { projectId: project.id, status: "posted" } }),
@@ -24,6 +51,10 @@ export default async function ProjectOverview({ params }: { params: Promise<{ sl
 
   return (
     <div className="space-y-10">
+      <IgFlashToast connected={sp.ig_connected === "1"} errorMsg={sp.ig_error ?? null} />
+
+      <InstagramCard slug={slug} connection={connection} />
+
       <section className="grid sm:grid-cols-3 gap-4">
         <Stat label="Posted" value={posted} />
         <Stat label="Drafts" value={drafts} />

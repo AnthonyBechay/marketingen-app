@@ -12,8 +12,19 @@ import {
   XCircle,
   FileText,
   Archive,
-  Pencil,
+  AlertTriangle,
+  ExternalLink,
 } from "lucide-react";
+
+function InstagramGlyph({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="2" width="20" height="20" rx="5" ry="5" />
+      <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
+      <line x1="17.5" y1="6.5" x2="17.51" y2="6.5" />
+    </svg>
+  );
+}
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,6 +39,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { setPostStatusAction, deletePostAction, type PostStatus } from "../actions";
+import { publishPostNowAction } from "../../instagram-actions";
 import { formatDate } from "@/lib/utils";
 
 type Post = {
@@ -43,6 +55,10 @@ type Post = {
   scheduledFor: string | null;
   createdAt: string;
   postedAt: string | null;
+  igMediaId: string | null;
+  publishError: string | null;
+  publishAttempts: number;
+  lastAttemptAt: string | null;
 };
 
 const STATUS_META: Record<
@@ -56,11 +72,39 @@ const STATUS_META: Record<
   archived: { label: "Archived", tone: "outline", icon: Archive },
 };
 
-export function PostView({ slug, post }: { slug: string; post: Post }) {
+export function PostView({
+  slug,
+  post,
+  igConnected,
+}: {
+  slug: string;
+  post: Post;
+  igConnected: boolean;
+}) {
   const urls = post.imageUrls;
   const [copied, setCopied] = useState(false);
   const [pending, startTransition] = useTransition();
   const [scheduleOpen, setScheduleOpen] = useState(false);
+
+  function publishNow() {
+    if (!igConnected) {
+      toast.error("Instagram is not connected for this project. Connect it from the project overview.");
+      return;
+    }
+    if (!confirm("Publish this post to Instagram right now?")) return;
+    startTransition(async () => {
+      try {
+        const res = await publishPostNowAction(slug, post.id);
+        if ("error" in res) {
+          toast.error(res.error);
+          return;
+        }
+        toast.success("Posted to Instagram");
+      } catch (e) {
+        toast.error((e as Error).message);
+      }
+    });
+  }
 
   function copy() {
     navigator.clipboard.writeText(post.caption);
@@ -155,6 +199,44 @@ export function PostView({ slug, post }: { slug: string; post: Post }) {
         </div>
       </div>
 
+      {/* Publish error banner — visible when last attempt failed */}
+      {post.publishError && post.status !== "posted" && (
+        <div className="card-surface p-4 mb-4 border-destructive/40 bg-destructive/[0.06]">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <div className="font-semibold text-sm text-destructive mb-1">
+                Last publish attempt failed{" "}
+                <span className="font-mono text-xs opacity-70">
+                  ({post.publishAttempts}× tried{post.lastAttemptAt ? `, ${formatDate(post.lastAttemptAt)}` : ""})
+                </span>
+              </div>
+              <div className="font-mono text-xs text-foreground/80 break-words">{post.publishError}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Posted-to-IG success banner */}
+      {post.status === "posted" && post.igMediaId && (
+        <div className="card-surface p-4 mb-4 border-emerald-500/30 bg-emerald-500/[0.06]">
+          <div className="flex items-center gap-3">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+            <div className="flex-1 text-sm">
+              Published to Instagram{post.postedAt ? ` on ${formatDate(post.postedAt)}` : ""}.
+            </div>
+            <a
+              href={`https://www.instagram.com/p/${post.igMediaId}/`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs font-mono text-emerald-400 hover:underline inline-flex items-center gap-1"
+            >
+              View on IG <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
+        </div>
+      )}
+
       {/* Status changer bar */}
       <div className="card-surface p-3 mb-6 flex flex-wrap items-center gap-2">
         <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground px-2">
@@ -169,6 +251,18 @@ export function PostView({ slug, post }: { slug: string; post: Post }) {
         <StatusBtn target="posted" current={post.status} onClick={() => changeStatus("posted")} disabled={pending}>
           <CheckCircle2 className="w-3.5 h-3.5" /> Mark posted
         </StatusBtn>
+        {igConnected && (
+          <Button
+            size="sm"
+            variant="default"
+            onClick={publishNow}
+            disabled={pending || post.status === "posted"}
+            title="Publish to Instagram immediately"
+            className="bg-emerald-600 hover:bg-emerald-600/90"
+          >
+            <InstagramGlyph className="w-3.5 h-3.5" /> Post to IG now
+          </Button>
+        )}
         <StatusBtn target="cancelled" current={post.status} onClick={() => changeStatus("cancelled")} disabled={pending}>
           <XCircle className="w-3.5 h-3.5" /> Cancel
         </StatusBtn>
