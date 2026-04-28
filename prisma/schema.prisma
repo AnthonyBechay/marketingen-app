@@ -108,29 +108,33 @@ model QueueItem {
 
 enum PostStatus {
   draft
+  scheduled
   posted
+  cancelled
   archived
 }
 
 model Post {
-  id          String     @id @default(cuid())
-  projectId   String
-  name        String     // slug
-  topic       String
-  summary     String     @db.Text @default("")
-  pillar      String?
-  format      String?
-  caption     String     @db.Text
+  id            String     @id @default(cuid())
+  projectId     String
+  name          String     // slug
+  topic         String
+  summary       String     @db.Text @default("")
+  pillar        String?
+  format        String?    // single | carousel | story | case-study
+  caption       String     @db.Text
   // Slides as JSON array of slide objects (the spec, for re-rendering)
-  slidesJson  Json
+  slidesJson    Json
   // Rendered image URLs in order
-  imageUrls   Json       // string[]
-  status      PostStatus @default(draft)
-  createdAt   DateTime   @default(now())
-  postedAt    DateTime?
+  imageUrls     Json       // string[]
+  status        PostStatus @default(draft)
+  scheduledFor  DateTime?
+  postedAt      DateTime?
+  createdAt     DateTime   @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, name])
   @@index([projectId, status, createdAt])
+  @@index([projectId, scheduledFor])
 }

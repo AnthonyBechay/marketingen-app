@@ -19,7 +19,17 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { saveBrandAction, uploadLogoAction, removeLogoAction } from "./actions";
+import { saveBrandAction, uploadLogoAction, removeLogoAction, aiFillBrandAction, type AiBrandFill } from "./actions";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Wand2, Sparkles as SparklesIcon, Check } from "lucide-react";
 
 // Curated font presets — cleaner UX than asking users for a Google Fonts URL.
 const FONT_PRESETS: Record<string, { sans: string; mono: string; googleFontsUrl: string }> = {
@@ -185,8 +195,23 @@ export function BrandForm({ slug, initial }: { slug: string; initial: BrandData 
     ([, v]) => v.sans === data.fonts.sans && v.mono === data.fonts.mono,
   )?.[0];
 
+  function applyAiFill(fill: AiBrandFill) {
+    setData((d) => ({
+      ...d,
+      ...(fill.colors ? { colors: fill.colors } : {}),
+      ...(fill.voice !== undefined ? { voice: fill.voice } : {}),
+      ...(fill.audience !== undefined ? { audience: fill.audience } : {}),
+      ...(fill.anchors ? { anchors: fill.anchors } : {}),
+      ...(fill.hashtagPool ? { hashtagPool: fill.hashtagPool } : {}),
+      ...(fill.ctaDefault !== undefined ? { ctaDefault: fill.ctaDefault } : {}),
+    }));
+    toast.success("Applied AI fill — review and Save brand to commit");
+  }
+
   return (
     <div className="space-y-6">
+      <AiFillBrandCard slug={slug} onApply={applyAiFill} />
+
       <Tabs defaultValue="identity">
         <TabsList>
           <TabsTrigger value="identity"><Sparkles className="w-3.5 h-3.5" /> Identity</TabsTrigger>
@@ -535,6 +560,178 @@ function ColorSwatch({
         <Input className="font-mono text-xs h-9" value={value} onChange={(e) => onChange(e.target.value)} />
       </div>
       <p className="text-[10px] text-muted-foreground leading-snug">{hint}</p>
+    </div>
+  );
+}
+
+function AiFillBrandCard({
+  slug,
+  onApply,
+}: {
+  slug: string;
+  onApply: (fill: AiBrandFill) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [vibe, setVibe] = useState("");
+  const [pending, startTransition] = useTransition();
+  const [preview, setPreview] = useState<AiBrandFill | null>(null);
+
+  function onGenerate() {
+    if (!vibe.trim()) return;
+    startTransition(async () => {
+      const res = await aiFillBrandAction(slug, vibe);
+      if ("error" in res) {
+        toast.error(res.error);
+        return;
+      }
+      setPreview(res.data);
+    });
+  }
+
+  function onConfirmApply() {
+    if (!preview) return;
+    onApply(preview);
+    setOpen(false);
+    setPreview(null);
+    setVibe("");
+  }
+
+  return (
+    <div className="card-surface p-5 border-accent/30 bg-accent/[0.03]">
+      <div className="flex items-start gap-4">
+        <div className="w-10 h-10 rounded-xl bg-accent/15 border border-accent/30 flex items-center justify-center flex-shrink-0">
+          <Wand2 className="w-5 h-5 text-accent" />
+        </div>
+        <div className="flex-1">
+          <h3 className="font-semibold mb-1">Fill with AI</h3>
+          <p className="text-sm text-muted-foreground">
+            Describe your brand vibe in plain English. AI fills colors, voice, audience,
+            anchors, hashtags, and CTA — all editable after.
+          </p>
+        </div>
+        <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setPreview(null); setVibe(""); } }}>
+          <DialogTrigger asChild>
+            <Button>
+              <SparklesIcon className="w-4 h-4" /> Fill with AI
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Wand2 className="w-4 h-4 text-accent" /> Fill brand from a vibe
+              </DialogTitle>
+              <DialogDescription>
+                {preview
+                  ? "Review the suggestion. Apply to fill the form (you still need to Save brand to commit)."
+                  : "Tell the AI what your brand feels like — be specific about audience, mood, and any concrete details."}
+              </DialogDescription>
+            </DialogHeader>
+
+            {!preview ? (
+              <div className="space-y-2">
+                <Label>Vibe brief</Label>
+                <Textarea
+                  rows={6}
+                  placeholder={`e.g. "Dark fintech for SMB founders in the GCC. Confident, no fluff. Electric blue accent. Pricing $1K starting. Punchy hooks, real numbers."`}
+                  value={vibe}
+                  onChange={(e) => setVibe(e.target.value)}
+                  autoFocus
+                />
+              </div>
+            ) : (
+              <AiFillPreview fill={preview} />
+            )}
+
+            <DialogFooter>
+              {!preview ? (
+                <>
+                  <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+                  <Button onClick={onGenerate} disabled={pending || !vibe.trim()}>
+                    <SparklesIcon className="w-4 h-4" />
+                    {pending ? "Generating…" : "Generate"}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button variant="outline" onClick={() => setPreview(null)}>← Back to brief</Button>
+                  <Button onClick={onConfirmApply}>
+                    <Check className="w-4 h-4" /> Apply to form
+                  </Button>
+                </>
+              )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </div>
+  );
+}
+
+function AiFillPreview({ fill }: { fill: AiBrandFill }) {
+  return (
+    <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+      {fill.rationale && (
+        <div className="card-surface p-3 text-sm bg-accent/[0.04]">
+          <div className="text-xs font-mono uppercase tracking-widest text-accent mb-1">Rationale</div>
+          {fill.rationale}
+        </div>
+      )}
+      {fill.colors && (
+        <div>
+          <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">Colors</div>
+          <div className="grid grid-cols-7 gap-2">
+            {(Object.entries(fill.colors) as Array<[string, string]>).map(([k, v]) => (
+              <div key={k} className="text-center">
+                <div className="w-full aspect-square rounded-lg border border-border" style={{ background: v }} />
+                <div className="text-[10px] font-mono text-muted-foreground mt-1 truncate">{k}</div>
+                <div className="text-[10px] font-mono text-foreground/80">{v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {fill.voice && (
+        <div>
+          <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-1">Voice</div>
+          <p className="text-sm">{fill.voice}</p>
+        </div>
+      )}
+      {fill.audience && (
+        <div>
+          <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-1">Audience</div>
+          <p className="text-sm">{fill.audience}</p>
+        </div>
+      )}
+      {fill.anchors && Object.keys(fill.anchors).length > 0 && (
+        <div>
+          <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-1">Anchors</div>
+          <div className="flex flex-wrap gap-2 text-sm">
+            {Object.entries(fill.anchors).map(([k, v]) => (
+              <span key={k} className="border border-border rounded-full px-3 py-1 text-xs font-mono">
+                <span className="text-muted-foreground">{k}:</span> {v}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {fill.hashtagPool && fill.hashtagPool.length > 0 && (
+        <div>
+          <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-1">Hashtags</div>
+          <div className="flex flex-wrap gap-1.5">
+            {fill.hashtagPool.map((h) => (
+              <span key={h} className="bg-secondary rounded-full px-3 py-1 text-xs font-mono">{h}</span>
+            ))}
+          </div>
+        </div>
+      )}
+      {fill.ctaDefault && (
+        <div>
+          <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-1">CTA</div>
+          <span className="bg-primary/15 text-primary border border-primary/30 rounded-md px-3 py-1.5 text-sm font-medium">
+            {fill.ctaDefault}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

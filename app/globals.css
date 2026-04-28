@@ -4,26 +4,29 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --background: 222 47% 5%;
-  --foreground: 210 40% 98%;
-  --card: 222 47% 7%;
-  --card-foreground: 210 40% 98%;
-  --popover: 222 47% 7%;
-  --popover-foreground: 210 40% 98%;
-  --primary: 217 91% 60%;
+  /* Lightened, less-saturated dark theme. Easier on the eyes than the old
+     near-black navy, with stronger contrast on borders and muted text so
+     the UI feels more polished and less aggressive. */
+  --background: 220 16% 10%;
+  --foreground: 210 25% 96%;
+  --card: 220 14% 13%;
+  --card-foreground: 210 25% 96%;
+  --popover: 220 14% 14%;
+  --popover-foreground: 210 25% 96%;
+  --primary: 217 91% 62%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 222 47% 11%;
-  --secondary-foreground: 210 40% 98%;
-  --muted: 222 47% 11%;
-  --muted-foreground: 215 16% 65%;
-  --accent: 217 91% 60%;
+  --secondary: 220 12% 18%;
+  --secondary-foreground: 210 25% 96%;
+  --muted: 220 12% 18%;
+  --muted-foreground: 220 12% 70%;
+  --accent: 217 91% 62%;
   --accent-foreground: 0 0% 100%;
-  --destructive: 0 62% 45%;
-  --destructive-foreground: 210 40% 98%;
-  --border: 222 47% 15%;
-  --input: 222 47% 15%;
-  --ring: 217 91% 60%;
-  --radius: 0.625rem;
+  --destructive: 0 75% 55%;
+  --destructive-foreground: 210 25% 96%;
+  --border: 220 12% 22%;
+  --input: 220 12% 22%;
+  --ring: 217 91% 62%;
+  --radius: 0.75rem;
 }
 
 @theme inline {
@@ -67,10 +70,10 @@
     content: '';
     position: fixed;
     inset: 0;
-    background-size: 48px 48px;
+    background-size: 56px 56px;
     background-image:
-      linear-gradient(to right, rgba(59, 130, 246, 0.035) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(59, 130, 246, 0.035) 1px, transparent 1px);
+      linear-gradient(to right, rgba(96, 165, 250, 0.025) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(96, 165, 250, 0.025) 1px, transparent 1px);
     pointer-events: none;
     z-index: 0;
   }
@@ -86,11 +89,12 @@
 }
 
 .card-surface {
-  border-radius: 1rem;
+  border-radius: 0.85rem;
   border: 1px solid hsl(var(--border));
-  background: rgba(255,255,255,0.02);
-  backdrop-filter: blur(4px);
+  background: hsl(var(--card));
+  transition: border-color 0.2s ease, transform 0.2s ease;
 }
+.card-surface:hover { border-color: hsl(var(--border) / 1.2); }
 
 .eyebrow {
   display: inline-flex;

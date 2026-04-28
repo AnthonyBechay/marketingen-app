@@ -199,3 +199,117 @@ Make the queue concrete and specific to the brand and brief — not generic.`;
   revalidatePath(`/app/${slug}/campaign`);
   return { ok: true, count: parsed.queue.length };
 }
+
+// ─── AI continuity helper — extends the queue with new ideas ───────
+//
+// Reads brand + campaign + ALL published posts + remaining queue, and asks
+// Claude to propose N new ideas that:
+//   - match the brand voice and pillars
+//   - extend / build continuity with what's already been posted
+//   - DON'T repeat existing topics in the queue or in published history
+//
+// Appended to the bottom of the queue (positions after the current max).
+
+const aiSuggestSchema = z.object({
+  ideas: z.array(
+    z.object({
+      topic: z.string(),
+      pillar: z.string().optional(),
+      format: z.string().optional(),
+      notes: z.string().optional(),
+    }),
+  ),
+});
+
+export async function aiSuggestQueueItemsAction(slug: string, count: number = 5) {
+  const { project } = await requireProject(slug);
+  const [brand, campaign, posts, queue] = await Promise.all([
+    db.brand.findUnique({ where: { projectId: project.id } }),
+    db.campaign.findUnique({ where: { projectId: project.id } }),
+    db.post.findMany({
+      where: { projectId: project.id },
+      orderBy: { createdAt: "desc" },
+      select: { topic: true, summary: true, pillar: true, format: true, status: true },
+      take: 50,
+    }),
+    db.queueItem.findMany({
+      where: { projectId: project.id },
+      orderBy: { position: "asc" },
+      select: { topic: true, pillar: true },
+    }),
+  ]);
+  if (!brand || !campaign) return { error: "Brand or campaign missing" };
+
+  const targetCount = Math.max(1, Math.min(15, count | 0));
+  const pillars = (campaign.pillars as Array<{ name: string; description: string }>) ?? [];
+
+  const system = `You are an Instagram content strategist for ${brand.name}.
+
+BRAND
+Voice: ${brand.voice}
+Audience: ${brand.audience}
+Anchors: ${JSON.stringify(brand.anchors)}
+
+CAMPAIGN PILLARS:
+${pillars.map((p) => `  - ${p.name}: ${p.description}`).join("\n")}
+
+PUBLISHED HISTORY (${posts.length} posts — do NOT repeat these angles, but build on them):
+${posts.map((p) => `  - [${p.pillar ?? "?"} / ${p.format ?? "?"} / ${p.status}] ${p.topic} — ${p.summary.slice(0, 120)}`).join("\n") || "  (none yet)"}
+
+ALREADY IN QUEUE (don't duplicate these):
+${queue.map((q) => `  - [${q.pillar ?? "?"}] ${q.topic}`).join("\n") || "  (empty)"}
+
+TASK
+Propose ${targetCount} brand-new post ideas that:
+1. Build CONTINUITY with what's already published (e.g. follow-ups, deeper dives, sequels, "part 2" angles, customer-aware reactions to recent posts).
+2. Rotate across content pillars proportionally — don't lean only on the most-used one.
+3. Mix formats: roughly 40% carousel, 25% single (normal feed post), 25% story, 10% case-study. Use the format that fits the topic best.
+4. Are concrete and specific, not generic ("5 signs your business needs X" > "Tips for businesses").
+
+OUTPUT
+Return ONLY valid JSON, no markdown fences:
+{
+  "ideas": [
+    {"topic": "...", "pillar": "matching pillar name", "format": "carousel|single|story|case-study", "notes": "1-sentence angle/hook hint"},
+    ...
+  ]
+}`;
+
+  const msg = await anthropic().messages.create({
+    model: ANTHROPIC_MODEL,
+    max_tokens: 2048,
+    system,
+    messages: [{ role: "user", content: `Generate ${targetCount} new ideas. Return JSON only.` }],
+  });
+  const raw = msg.content[0]?.type === "text" ? msg.content[0].text : "";
+  let parsed;
+  try {
+    parsed = aiSuggestSchema.parse(JSON.parse(extractJson(raw)));
+  } catch (e) {
+    return { error: `Could not parse AI response: ${(e as Error).message}` };
+  }
+
+  const max = await db.queueItem.aggregate({
+    where: { projectId: project.id },
+    _max: { position: true },
+  });
+  const startPos = (max._max.position ?? -1) + 1;
+
+  await db.$transaction(
+    parsed.ideas.map((item, i) =>
+      db.queueItem.create({
+        data: {
+          projectId: project.id,
+          position: startPos + i,
+          topic: item.topic,
+          pillar: item.pillar,
+          format: item.format,
+          notes: item.notes,
+        },
+      }),
+    ),
+  );
+
+  revalidatePath(`/app/${slug}/campaign`);
+  return { ok: true, count: parsed.ideas.length };
+}

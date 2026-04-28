@@ -29,6 +29,7 @@ import {
   deleteQueueItemAction,
   moveQueueItemAction,
   aiBuildCampaignAction,
+  aiSuggestQueueItemsAction,
 } from "./actions";
 
 type Pillar = { name: string; description: string };
@@ -368,16 +369,19 @@ function QueueSection({
 
   return (
     <div className={SECTION}>
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h3 className="font-semibold">Idea queue</h3>
           <p className="text-xs text-muted-foreground">
             {queue.length} ideas. Top of list goes next when you click <em>Generate next</em>.
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => setShowAdd(!showAdd)}>
-          <Plus className="w-3 h-3" /> Add idea
-        </Button>
+        <div className="flex items-center gap-2">
+          <SuggestMoreIdeasButton slug={slug} />
+          <Button variant="outline" size="sm" onClick={() => setShowAdd(!showAdd)}>
+            <Plus className="w-3 h-3" /> Add idea
+          </Button>
+        </div>
       </div>
 
       {showAdd && (
@@ -483,6 +487,64 @@ function QueueSection({
         )}
       </div>
     </div>
+  );
+}
+
+function SuggestMoreIdeasButton({ slug }: { slug: string }) {
+  const [count, setCount] = useState(5);
+  const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+
+  function onGenerate() {
+    startTransition(async () => {
+      const res = await aiSuggestQueueItemsAction(slug, count);
+      if (res?.error) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success(`${res.count} new ideas added to the queue`);
+      setOpen(false);
+      window.location.reload();
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="default" size="sm">
+          <Sparkles className="w-3 h-3" /> Suggest ideas
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-accent" /> Suggest more ideas
+          </DialogTitle>
+          <DialogDescription>
+            AI reads your published posts and remaining queue, then proposes new ideas
+            that build continuity and don&apos;t repeat angles. Appended to the bottom
+            of the queue.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Label>How many ideas?</Label>
+          <Input
+            type="number"
+            min={1}
+            max={15}
+            value={count}
+            onChange={(e) => setCount(Number(e.target.value))}
+          />
+          <p className="text-xs text-muted-foreground">Between 1 and 15.</p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button onClick={onGenerate} disabled={pending}>
+            <Sparkles className="w-4 h-4" /> {pending ? "Generating…" : `Suggest ${count} ideas`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

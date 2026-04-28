@@ -179,11 +179,16 @@ case_study — single block of body text under a label/headline.
 feature_grid — 4 stats + 4 feature tiles.
   {"type":"feature_grid", "label":"Results", "headline":"...", "stats":[["247","Items","#3b82f6"]], "features":[["Title","Description",false]]}
 
+FORMAT GUIDE — pick ONE based on the topic:
+- "single"     → 1 slide at 1080x1350 (4:5). One cover slide with "swipe":false. The standard feed post when you have ONE strong message and don't need a carousel. Includes stats if you have a number-driven hook.
+- "carousel"   → 5–8 slides at 1080x1350 (4:5). Open with cover, end with cta. Mix slide types (numbered, comparison, case_study, feature_grid).
+- "story"      → 1 slide at 1080x1920 (9:16). Use {"size":"story"} on cover or terminal. For build-in-public hooks and announcements.
+- "case-study" → 4–6 slides. Open cover, then case_study + feature_grid blocks, end with cta. For showing real client work.
+
 GUIDELINES
-- Carousels: 5-8 slides. Open with cover, end with cta. Mix slide types.
-- Stories: 1 slide at 1080x1920 (cover or terminal).
 - Pick a content pillar that hasn't been used in the last 2-3 posts.
 - Vary slide-type composition from recent posts.
+- For "single": ALWAYS set "swipe":false on the cover. No other slides.
 - All JSON values must be valid strings — escape quotes as \\".
 `;
 }

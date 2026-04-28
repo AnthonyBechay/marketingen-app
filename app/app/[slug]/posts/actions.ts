@@ -6,18 +6,46 @@ import { db } from "@/lib/db";
 import { requireProject } from "@/lib/auth";
 import { deletePrefix, postPrefix } from "@/lib/r2";
 
+export type PostStatus = "draft" | "scheduled" | "posted" | "cancelled" | "archived";
+
 export async function setPostStatusAction(
   slug: string,
   postId: string,
-  status: "draft" | "posted" | "archived",
+  status: PostStatus,
+  scheduledFor?: string | null,
 ) {
   const { project } = await requireProject(slug);
+
+  // Build the patch carefully — only set scheduledFor when status === scheduled,
+  // and only set postedAt when status === posted (transitioning).
+  const data: {
+    status: PostStatus;
+    postedAt?: Date | null;
+    scheduledFor?: Date | null;
+  } = { status };
+
+  if (status === "posted") {
+    data.postedAt = new Date();
+  } else if (status === "draft" || status === "cancelled" || status === "archived") {
+    data.postedAt = null;
+  }
+
+  if (status === "scheduled") {
+    if (!scheduledFor) {
+      return { error: "A scheduled date is required" };
+    }
+    const dt = new Date(scheduledFor);
+    if (Number.isNaN(dt.getTime())) {
+      return { error: "Invalid scheduled date" };
+    }
+    data.scheduledFor = dt;
+  } else {
+    data.scheduledFor = null;
+  }
+
   await db.post.updateMany({
     where: { id: postId, projectId: project.id },
-    data: {
-      status,
-      postedAt: status === "posted" ? new Date() : null,
-    },
+    data,
   });
   revalidatePath(`/app/${slug}/posts`);
   revalidatePath(`/app/${slug}/posts/${postId}`);
@@ -29,7 +57,6 @@ export async function deletePostAction(slug: string, postId: string) {
   const post = await db.post.findFirst({ where: { id: postId, projectId: project.id } });
   if (!post) return { error: "Not found" };
 
-  // Best-effort delete from R2 — uses the user-aware path prefix.
   try {
     await deletePrefix(postPrefix(user.id, project.id, post.name) + "/");
   } catch (e) {

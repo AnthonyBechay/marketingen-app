@@ -1,12 +1,34 @@
 "use client";
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
-import { Copy, CheckCircle2, Trash2, Archive, Undo, ChevronLeft, Download } from "lucide-react";
+import {
+  Copy,
+  Trash2,
+  ChevronLeft,
+  Download,
+  CalendarClock,
+  CheckCircle2,
+  XCircle,
+  FileText,
+  Archive,
+  Pencil,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import Link from "next/link";
-import { setPostStatusAction, deletePostAction } from "../actions";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { setPostStatusAction, deletePostAction, type PostStatus } from "../actions";
+import { formatDate } from "@/lib/utils";
 
 type Post = {
   id: string;
@@ -17,15 +39,28 @@ type Post = {
   format: string | null;
   caption: string;
   imageUrls: string[];
-  status: "draft" | "posted" | "archived";
+  status: PostStatus;
+  scheduledFor: string | null;
   createdAt: string;
   postedAt: string | null;
+};
+
+const STATUS_META: Record<
+  PostStatus,
+  { label: string; tone: "default" | "secondary" | "success" | "destructive" | "outline"; icon: typeof FileText }
+> = {
+  draft: { label: "Draft", tone: "secondary", icon: FileText },
+  scheduled: { label: "Scheduled", tone: "default", icon: CalendarClock },
+  posted: { label: "Posted", tone: "success", icon: CheckCircle2 },
+  cancelled: { label: "Cancelled", tone: "destructive", icon: XCircle },
+  archived: { label: "Archived", tone: "outline", icon: Archive },
 };
 
 export function PostView({ slug, post }: { slug: string; post: Post }) {
   const urls = post.imageUrls;
   const [copied, setCopied] = useState(false);
   const [pending, startTransition] = useTransition();
+  const [scheduleOpen, setScheduleOpen] = useState(false);
 
   function copy() {
     navigator.clipboard.writeText(post.caption);
@@ -34,11 +69,16 @@ export function PostView({ slug, post }: { slug: string; post: Post }) {
     setTimeout(() => setCopied(false), 1500);
   }
 
-  function mark(status: "draft" | "posted" | "archived") {
+  function changeStatus(status: PostStatus, scheduledFor?: string) {
     startTransition(async () => {
       try {
-        await setPostStatusAction(slug, post.id, status);
-        toast.success(`Marked ${status}`);
+        const res = await setPostStatusAction(slug, post.id, status, scheduledFor);
+        if (res && "error" in res && res.error) {
+          toast.error(res.error);
+          return;
+        }
+        toast.success(`Marked ${STATUS_META[status].label.toLowerCase()}`);
+        setScheduleOpen(false);
       } catch (e) {
         toast.error((e as Error).message);
       }
@@ -57,6 +97,35 @@ export function PostView({ slug, post }: { slug: string; post: Post }) {
     });
   }
 
+  async function downloadAll() {
+    // Sequential client-side downloads — no need for a server zip.
+    // R2 PNGs are tiny and Cache-Control: public, so this is fast.
+    toast.info(`Downloading ${urls.length} slide${urls.length > 1 ? "s" : ""}…`);
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
+      try {
+        const res = await fetch(url);
+        const blob = await res.blob();
+        const fname = urls.length === 1
+          ? `${post.name}.png`
+          : `${post.name}-slide-${String(i + 1).padStart(2, "0")}.png`;
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = fname;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(a.href);
+      } catch (e) {
+        console.error("Download failed for", url, e);
+      }
+    }
+    toast.success("All slides downloaded");
+  }
+
+  const StatusIcon = STATUS_META[post.status].icon;
+  const isStory = post.format === "story";
+
   return (
     <div>
       <Link
@@ -66,31 +135,54 @@ export function PostView({ slug, post }: { slug: string; post: Post }) {
         <ChevronLeft className="w-3 h-3" /> All posts
       </Link>
 
-      <div className="flex items-start justify-between gap-4 mb-6">
-        <div>
+      <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
+        <div className="min-w-0 flex-1">
           <h2 className="text-2xl font-bold tracking-tight mb-1">{post.topic}</h2>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-mono text-muted-foreground">{post.name}</span>
             {post.pillar && <Badge variant="outline">{post.pillar}</Badge>}
-            <Badge variant={post.status === "posted" ? "success" : "secondary"}>{post.status}</Badge>
+            {post.format && <Badge variant="outline">{post.format}</Badge>}
+            <Badge variant={STATUS_META[post.status].tone}>
+              <StatusIcon className="w-3 h-3 mr-1" />
+              {STATUS_META[post.status].label}
+              {post.status === "scheduled" && post.scheduledFor && (
+                <span className="ml-1 font-mono text-[10px] opacity-80">
+                  · {formatDate(post.scheduledFor)}
+                </span>
+              )}
+            </Badge>
           </div>
         </div>
-        <div className="flex gap-2">
-          {post.status !== "posted" ? (
-            <Button onClick={() => mark("posted")} disabled={pending}>
-              <CheckCircle2 className="w-4 h-4" /> Mark posted
-            </Button>
-          ) : (
-            <Button variant="outline" onClick={() => mark("draft")} disabled={pending}>
-              <Undo className="w-4 h-4" /> Mark draft
-            </Button>
-          )}
-          {post.status !== "archived" && (
-            <Button variant="outline" onClick={() => mark("archived")} disabled={pending}>
-              <Archive className="w-4 h-4" /> Archive
-            </Button>
-          )}
-          <Button variant="outline" onClick={onDelete} disabled={pending} className="text-destructive hover:bg-destructive/10">
+      </div>
+
+      {/* Status changer bar */}
+      <div className="card-surface p-3 mb-6 flex flex-wrap items-center gap-2">
+        <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground px-2">
+          Status:
+        </span>
+        <StatusBtn target="draft" current={post.status} onClick={() => changeStatus("draft")} disabled={pending}>
+          <FileText className="w-3.5 h-3.5" /> Draft
+        </StatusBtn>
+        <StatusBtn target="scheduled" current={post.status} onClick={() => setScheduleOpen(true)} disabled={pending}>
+          <CalendarClock className="w-3.5 h-3.5" /> Schedule
+        </StatusBtn>
+        <StatusBtn target="posted" current={post.status} onClick={() => changeStatus("posted")} disabled={pending}>
+          <CheckCircle2 className="w-3.5 h-3.5" /> Mark posted
+        </StatusBtn>
+        <StatusBtn target="cancelled" current={post.status} onClick={() => changeStatus("cancelled")} disabled={pending}>
+          <XCircle className="w-3.5 h-3.5" /> Cancel
+        </StatusBtn>
+        <StatusBtn target="archived" current={post.status} onClick={() => changeStatus("archived")} disabled={pending}>
+          <Archive className="w-3.5 h-3.5" /> Archive
+        </StatusBtn>
+        <div className="ml-auto">
+          <Button
+            variant="outline"
+            onClick={onDelete}
+            disabled={pending}
+            className="text-destructive hover:bg-destructive/10 border-destructive/30"
+            size="sm"
+          >
             <Trash2 className="w-4 h-4" /> Delete
           </Button>
         </div>
@@ -98,19 +190,27 @@ export function PostView({ slug, post }: { slug: string; post: Post }) {
 
       <div className="grid lg:grid-cols-[1fr_400px] gap-6">
         <div className="space-y-3">
-          <h3 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-            Slides ({urls.length})
-          </h3>
-          <div className="grid sm:grid-cols-2 gap-3">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
+              Slides ({urls.length})
+            </h3>
+            {urls.length > 0 && (
+              <Button variant="outline" size="sm" onClick={downloadAll}>
+                <Download className="w-3.5 h-3.5" />
+                {urls.length === 1 ? "Download PNG" : "Download all"}
+              </Button>
+            )}
+          </div>
+          <div className={isStory && urls.length === 1 ? "max-w-md" : "grid sm:grid-cols-2 gap-3"}>
             {urls.map((url, i) => (
               <div key={url} className="card-surface overflow-hidden">
-                <div className="aspect-[4/5] bg-secondary">
+                <div className={isStory ? "aspect-[9/16] bg-secondary" : "aspect-[4/5] bg-secondary"}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={url} alt={`Slide ${i + 1}`} className="w-full h-full object-cover" />
                 </div>
                 <div className="px-3 py-2 flex items-center justify-between">
                   <span className="text-xs font-mono text-muted-foreground">
-                    Slide {String(i + 1).padStart(2, "0")}
+                    {urls.length === 1 ? "Image" : `Slide ${String(i + 1).padStart(2, "0")}`}
                   </span>
                   <a
                     href={url}
@@ -142,8 +242,116 @@ export function PostView({ slug, post }: { slug: string; post: Post }) {
               {post.summary}
             </div>
           )}
+
+          <div className="card-surface p-4 text-xs space-y-1.5">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Created</span>
+              <span className="font-mono">{formatDate(post.createdAt)}</span>
+            </div>
+            {post.scheduledFor && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Scheduled</span>
+                <span className="font-mono">{formatDate(post.scheduledFor)}</span>
+              </div>
+            )}
+            {post.postedAt && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Posted</span>
+                <span className="font-mono">{formatDate(post.postedAt)}</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      <ScheduleDialog
+        open={scheduleOpen}
+        onOpenChange={setScheduleOpen}
+        onConfirm={(dt) => changeStatus("scheduled", dt)}
+        defaultDate={post.scheduledFor}
+        pending={pending}
+      />
     </div>
   );
+}
+
+function StatusBtn({
+  current,
+  target,
+  children,
+  onClick,
+  disabled,
+}: {
+  current: PostStatus;
+  target: PostStatus;
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  const active = current === target;
+  return (
+    <Button
+      size="sm"
+      variant={active ? "default" : "outline"}
+      onClick={onClick}
+      disabled={disabled}
+    >
+      {children}
+    </Button>
+  );
+}
+
+function ScheduleDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+  defaultDate,
+  pending,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onConfirm: (iso: string) => void;
+  defaultDate: string | null;
+  pending: boolean;
+}) {
+  const [value, setValue] = useState(() => {
+    const d = defaultDate ? new Date(defaultDate) : new Date(Date.now() + 24 * 60 * 60 * 1000);
+    return toLocalIsoForInput(d);
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <CalendarClock className="w-4 h-4 text-accent" /> Schedule post
+          </DialogTitle>
+          <DialogDescription>
+            Pick when you want this to go live. We&apos;ll just track the time — no auto-publish to Instagram yet.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Label htmlFor="schedule-at">Scheduled for</Label>
+          <Input
+            id="schedule-at"
+            type="datetime-local"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={() => onConfirm(new Date(value).toISOString())} disabled={pending || !value}>
+            <CalendarClock className="w-4 h-4" /> Schedule
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Convert a Date to the value format the <input type="datetime-local"> expects. */
+function toLocalIsoForInput(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
