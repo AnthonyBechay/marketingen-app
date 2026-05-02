@@ -148,7 +148,7 @@ Return ONLY valid JSON, no markdown fences, no commentary. Schema:
   "topic": "one-line topic for the campaign log",
   "summary": "2 sentences describing what this post covers (for the campaign log)",
   "format": "carousel | story | case-study",
-  "caption": "Instagram caption — hook on line 1, 2-4 paragraphs, arrow CTA + hashtags. Use \\n for newlines.",
+  "caption": "Caption — hook on line 1, 2-4 paragraphs, arrow CTA + hashtags. Reads well on Instagram and LinkedIn alike. Use \\n for newlines.",
   "slides": [ <slide objects> ]
 }
 
@@ -202,7 +202,7 @@ export async function generateAiPost(
   if (queueMeta?.pillar) userMsg += `\n\nSuggested pillar: ${queueMeta.pillar}`;
   if (queueMeta?.format) userMsg += `\nSuggested format: ${queueMeta.format}`;
   if (queueMeta?.notes) userMsg += `\nNotes: ${queueMeta.notes}`;
-  userMsg += "\n\nGenerate one Instagram post. Return JSON only.";
+  userMsg += "\n\nGenerate one social post (works for Instagram + LinkedIn). Return JSON only.";
 
   const resp = await anthropic().messages.create({
     model: ANTHROPIC_MODEL,

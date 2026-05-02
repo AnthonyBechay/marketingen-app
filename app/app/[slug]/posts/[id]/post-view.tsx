@@ -1,5 +1,5 @@
 "use client";
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import {
@@ -14,17 +14,10 @@ import {
   Archive,
   AlertTriangle,
   ExternalLink,
+  Send,
+  Plug,
+  RotateCcw,
 } from "lucide-react";
-
-function InstagramGlyph({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="2" y="2" width="20" height="20" rx="5" ry="5" />
-      <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
-      <line x1="17.5" y1="6.5" x2="17.51" y2="6.5" />
-    </svg>
-  );
-}
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -38,11 +31,46 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { setPostStatusAction, deletePostAction, type PostStatus } from "../actions";
-import { publishPostNowAction } from "../../instagram-actions";
+import { ProviderGlyph } from "@/components/provider-glyph";
+import { deletePostAction } from "../actions";
+import {
+  cancelTargetAction,
+  publishTargetNowAction,
+  resetTargetAction,
+  scheduleTargetsAction,
+  setPostLifecycleAction,
+  setPostTargetsAction,
+} from "../../target-actions";
 import { formatDate } from "@/lib/utils";
 
-type Post = {
+export type Target = {
+  id: string;
+  connectionId: string;
+  provider: "instagram" | "linkedin";
+  providerName: string;
+  providerColor: string;
+  accountHandle: string | null;
+  accountName: string | null;
+  status: "pending" | "scheduled" | "publishing" | "posted" | "failed" | "cancelled";
+  scheduledFor: string | null;
+  postedAt: string | null;
+  providerPostId: string | null;
+  providerUrl: string | null;
+  error: string | null;
+  attempts: number;
+  lastAttemptAt: string | null;
+};
+
+export type AvailableConnection = {
+  id: string;
+  provider: "instagram" | "linkedin";
+  providerName: string;
+  providerColor: string;
+  accountHandle: string | null;
+  accountName: string | null;
+};
+
+export type PostViewData = {
   id: string;
   name: string;
   topic: string;
@@ -51,18 +79,16 @@ type Post = {
   format: string | null;
   caption: string;
   imageUrls: string[];
-  status: PostStatus;
+  status: "draft" | "scheduled" | "posted" | "cancelled" | "archived";
   scheduledFor: string | null;
   createdAt: string;
   postedAt: string | null;
-  igMediaId: string | null;
-  publishError: string | null;
-  publishAttempts: number;
-  lastAttemptAt: string | null;
+  targets: Target[];
+  availableConnections: AvailableConnection[];
 };
 
-const STATUS_META: Record<
-  PostStatus,
+const POST_STATUS_META: Record<
+  PostViewData["status"],
   { label: string; tone: "default" | "secondary" | "success" | "destructive" | "outline"; icon: typeof FileText }
 > = {
   draft: { label: "Draft", tone: "secondary", icon: FileText },
@@ -72,60 +98,105 @@ const STATUS_META: Record<
   archived: { label: "Archived", tone: "outline", icon: Archive },
 };
 
-export function PostView({
-  slug,
-  post,
-  igConnected,
-}: {
-  slug: string;
-  post: Post;
-  igConnected: boolean;
-}) {
+const TARGET_STATUS_META: Record<
+  Target["status"],
+  { label: string; tone: "default" | "secondary" | "success" | "destructive" | "outline" }
+> = {
+  pending: { label: "Pending", tone: "secondary" },
+  scheduled: { label: "Scheduled", tone: "default" },
+  publishing: { label: "Publishing…", tone: "default" },
+  posted: { label: "Posted", tone: "success" },
+  failed: { label: "Failed", tone: "destructive" },
+  cancelled: { label: "Cancelled", tone: "outline" },
+};
+
+export function PostView({ slug, post }: { slug: string; post: PostViewData }) {
   const urls = post.imageUrls;
-  const [copied, setCopied] = useState(false);
   const [pending, startTransition] = useTransition();
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  // The schedule dialog operates over the user's currently selected pending
+  // targets — by default, all not-yet-posted ones.
+  const [scheduleTargetIds, setScheduleTargetIds] = useState<string[]>([]);
+  const isStory = post.format === "story";
 
-  function publishNow() {
-    if (!igConnected) {
-      toast.error("Instagram is not connected for this project. Connect it from the project overview.");
+  const StatusIcon = POST_STATUS_META[post.status].icon;
+
+  const activeTargets = useMemo(
+    () => post.targets.filter((t) => t.status !== "cancelled"),
+    [post.targets],
+  );
+
+  function copy() {
+    navigator.clipboard.writeText(post.caption);
+    toast.success("Caption copied");
+  }
+
+  function onChangeChannels(connectionIds: string[]) {
+    startTransition(async () => {
+      const res = await setPostTargetsAction(slug, post.id, connectionIds);
+      if ("error" in res && res.error) toast.error(res.error);
+      else toast.success("Channels updated");
+    });
+  }
+
+  function openSchedule(targetIds: string[]) {
+    if (targetIds.length === 0) {
+      toast.error("Pick at least one channel to schedule");
       return;
     }
-    if (!confirm("Publish this post to Instagram right now?")) return;
+    setScheduleTargetIds(targetIds);
+    setScheduleOpen(true);
+  }
+
+  function onConfirmSchedule(iso: string) {
+    startTransition(async () => {
+      const res = await scheduleTargetsAction(slug, post.id, scheduleTargetIds, iso);
+      if ("error" in res && res.error) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success("Scheduled");
+      setScheduleOpen(false);
+    });
+  }
+
+  function onPublishNow(target: Target) {
+    if (!confirm(`Publish to ${target.providerName} (${target.accountHandle ?? "account"}) right now?`)) return;
     startTransition(async () => {
       try {
-        const res = await publishPostNowAction(slug, post.id);
+        const res = await publishTargetNowAction(slug, post.id, target.id);
         if ("error" in res) {
           toast.error(res.error);
           return;
         }
-        toast.success("Posted to Instagram");
+        toast.success(`Posted to ${target.providerName}`);
       } catch (e) {
         toast.error((e as Error).message);
       }
     });
   }
 
-  function copy() {
-    navigator.clipboard.writeText(post.caption);
-    setCopied(true);
-    toast.success("Caption copied");
-    setTimeout(() => setCopied(false), 1500);
+  function onCancelTarget(target: Target) {
+    startTransition(async () => {
+      const res = await cancelTargetAction(slug, post.id, target.id);
+      if ("error" in res && res.error) toast.error(res.error);
+      else toast.success(`${target.providerName} cancelled`);
+    });
   }
 
-  function changeStatus(status: PostStatus, scheduledFor?: string) {
+  function onResetTarget(target: Target) {
     startTransition(async () => {
-      try {
-        const res = await setPostStatusAction(slug, post.id, status, scheduledFor);
-        if (res && "error" in res && res.error) {
-          toast.error(res.error);
-          return;
-        }
-        toast.success(`Marked ${STATUS_META[status].label.toLowerCase()}`);
-        setScheduleOpen(false);
-      } catch (e) {
-        toast.error((e as Error).message);
-      }
+      const res = await resetTargetAction(slug, post.id, target.id);
+      if ("error" in res && res.error) toast.error(res.error);
+      else toast.success(`${target.providerName} reset to pending`);
+    });
+  }
+
+  function onLifecycle(status: "draft" | "cancelled" | "archived") {
+    startTransition(async () => {
+      const res = await setPostLifecycleAction(slug, post.id, status);
+      if ("error" in res && res.error) toast.error(res.error);
+      else toast.success(`Marked ${status}`);
     });
   }
 
@@ -142,17 +213,16 @@ export function PostView({
   }
 
   async function downloadAll() {
-    // Sequential client-side downloads — no need for a server zip.
-    // R2 PNGs are tiny and Cache-Control: public, so this is fast.
     toast.info(`Downloading ${urls.length} slide${urls.length > 1 ? "s" : ""}…`);
     for (let i = 0; i < urls.length; i++) {
       const url = urls[i];
       try {
         const res = await fetch(url);
         const blob = await res.blob();
-        const fname = urls.length === 1
-          ? `${post.name}.png`
-          : `${post.name}-slide-${String(i + 1).padStart(2, "0")}.png`;
+        const fname =
+          urls.length === 1
+            ? `${post.name}.png`
+            : `${post.name}-slide-${String(i + 1).padStart(2, "0")}.png`;
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
         a.download = fname;
@@ -166,9 +236,6 @@ export function PostView({
     }
     toast.success("All slides downloaded");
   }
-
-  const StatusIcon = STATUS_META[post.status].icon;
-  const isStory = post.format === "story";
 
   return (
     <div>
@@ -186,9 +253,9 @@ export function PostView({
             <span className="text-xs font-mono text-muted-foreground">{post.name}</span>
             {post.pillar && <Badge variant="outline">{post.pillar}</Badge>}
             {post.format && <Badge variant="outline">{post.format}</Badge>}
-            <Badge variant={STATUS_META[post.status].tone}>
+            <Badge variant={POST_STATUS_META[post.status].tone}>
               <StatusIcon className="w-3 h-3 mr-1" />
-              {STATUS_META[post.status].label}
+              {POST_STATUS_META[post.status].label}
               {post.status === "scheduled" && post.scheduledFor && (
                 <span className="ml-1 font-mono text-[10px] opacity-80">
                   · {formatDate(post.scheduledFor)}
@@ -199,76 +266,47 @@ export function PostView({
         </div>
       </div>
 
-      {/* Publish error banner — visible when last attempt failed */}
-      {post.publishError && post.status !== "posted" && (
-        <div className="card-surface p-4 mb-4 border-destructive/40 bg-destructive/[0.06]">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0">
-              <div className="font-semibold text-sm text-destructive mb-1">
-                Last publish attempt failed{" "}
-                <span className="font-mono text-xs opacity-70">
-                  ({post.publishAttempts}× tried{post.lastAttemptAt ? `, ${formatDate(post.lastAttemptAt)}` : ""})
-                </span>
-              </div>
-              <div className="font-mono text-xs text-foreground/80 break-words">{post.publishError}</div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Channel manager + per-channel actions */}
+      <ChannelsCard
+        slug={slug}
+        post={post}
+        pending={pending}
+        onChangeChannels={onChangeChannels}
+        onPublishNow={onPublishNow}
+        onCancelTarget={onCancelTarget}
+        onResetTarget={onResetTarget}
+        onSchedule={(ids) => openSchedule(ids)}
+      />
 
-      {/* Posted-to-IG success banner */}
-      {post.status === "posted" && post.igMediaId && (
-        <div className="card-surface p-4 mb-4 border-emerald-500/30 bg-emerald-500/[0.06]">
-          <div className="flex items-center gap-3">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-            <div className="flex-1 text-sm">
-              Published to Instagram{post.postedAt ? ` on ${formatDate(post.postedAt)}` : ""}.
-            </div>
-            <a
-              href={`https://www.instagram.com/p/${post.igMediaId}/`}
-              target="_blank"
-              rel="noreferrer"
-              className="text-xs font-mono text-emerald-400 hover:underline inline-flex items-center gap-1"
-            >
-              View on IG <ExternalLink className="w-3 h-3" />
-            </a>
-          </div>
-        </div>
-      )}
-
-      {/* Status changer bar */}
+      {/* Lifecycle bar (draft / cancel / archive / delete) */}
       <div className="card-surface p-3 mb-6 flex flex-wrap items-center gap-2">
         <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground px-2">
-          Status:
+          Lifecycle:
         </span>
-        <StatusBtn target="draft" current={post.status} onClick={() => changeStatus("draft")} disabled={pending}>
+        <Button
+          size="sm"
+          variant={post.status === "draft" ? "default" : "outline"}
+          onClick={() => onLifecycle("draft")}
+          disabled={pending}
+        >
           <FileText className="w-3.5 h-3.5" /> Draft
-        </StatusBtn>
-        <StatusBtn target="scheduled" current={post.status} onClick={() => setScheduleOpen(true)} disabled={pending}>
-          <CalendarClock className="w-3.5 h-3.5" /> Schedule
-        </StatusBtn>
-        <StatusBtn target="posted" current={post.status} onClick={() => changeStatus("posted")} disabled={pending}>
-          <CheckCircle2 className="w-3.5 h-3.5" /> Mark posted
-        </StatusBtn>
-        {igConnected && (
-          <Button
-            size="sm"
-            variant="default"
-            onClick={publishNow}
-            disabled={pending || post.status === "posted"}
-            title="Publish to Instagram immediately"
-            className="bg-emerald-600 hover:bg-emerald-600/90"
-          >
-            <InstagramGlyph className="w-3.5 h-3.5" /> Post to IG now
-          </Button>
-        )}
-        <StatusBtn target="cancelled" current={post.status} onClick={() => changeStatus("cancelled")} disabled={pending}>
-          <XCircle className="w-3.5 h-3.5" /> Cancel
-        </StatusBtn>
-        <StatusBtn target="archived" current={post.status} onClick={() => changeStatus("archived")} disabled={pending}>
+        </Button>
+        <Button
+          size="sm"
+          variant={post.status === "cancelled" ? "default" : "outline"}
+          onClick={() => onLifecycle("cancelled")}
+          disabled={pending}
+        >
+          <XCircle className="w-3.5 h-3.5" /> Cancel all
+        </Button>
+        <Button
+          size="sm"
+          variant={post.status === "archived" ? "default" : "outline"}
+          onClick={() => onLifecycle("archived")}
+          disabled={pending}
+        >
           <Archive className="w-3.5 h-3.5" /> Archive
-        </StatusBtn>
+        </Button>
         <div className="ml-auto">
           <Button
             variant="outline"
@@ -326,13 +364,15 @@ export function PostView({
             Caption
           </h3>
           <Textarea readOnly value={post.caption} rows={18} className="font-mono text-xs" />
-          <Button onClick={copy} className="w-full" variant={copied ? "secondary" : "default"}>
-            <Copy className="w-4 h-4" /> {copied ? "Copied!" : "Copy caption"}
+          <Button onClick={copy} className="w-full">
+            <Copy className="w-4 h-4" /> Copy caption
           </Button>
 
           {post.summary && (
             <div className="card-surface p-4 text-sm">
-              <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-1">Summary</div>
+              <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-1">
+                Summary
+              </div>
               {post.summary}
             </div>
           )}
@@ -361,37 +401,277 @@ export function PostView({
       <ScheduleDialog
         open={scheduleOpen}
         onOpenChange={setScheduleOpen}
-        onConfirm={(dt) => changeStatus("scheduled", dt)}
+        onConfirm={onConfirmSchedule}
         defaultDate={post.scheduledFor}
+        targetCount={scheduleTargetIds.length}
         pending={pending}
       />
+
+      {activeTargets.length === 0 && post.availableConnections.length === 0 && (
+        <div className="card-surface p-6 mt-6 border-amber-500/30 bg-amber-500/[0.04]">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5" />
+            <div className="flex-1">
+              <div className="font-semibold text-sm mb-1">No connections available</div>
+              <div className="text-sm text-muted-foreground mb-3">
+                Connect Instagram or LinkedIn to publish this post.
+              </div>
+              <Button asChild size="sm">
+                <Link href={`/app/${slug}/connections`}>
+                  <Plug className="w-3.5 h-3.5" /> Connect an account
+                </Link>
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function StatusBtn({
-  current,
-  target,
-  children,
-  onClick,
-  disabled,
+function ChannelsCard({
+  slug,
+  post,
+  pending,
+  onChangeChannels,
+  onPublishNow,
+  onCancelTarget,
+  onResetTarget,
+  onSchedule,
 }: {
-  current: PostStatus;
-  target: PostStatus;
-  children: React.ReactNode;
-  onClick: () => void;
-  disabled?: boolean;
+  slug: string;
+  post: PostViewData;
+  pending: boolean;
+  onChangeChannels: (connectionIds: string[]) => void;
+  onPublishNow: (target: Target) => void;
+  onCancelTarget: (target: Target) => void;
+  onResetTarget: (target: Target) => void;
+  onSchedule: (targetIds: string[]) => void;
 }) {
-  const active = current === target;
+  const activeIds = useMemo(
+    () =>
+      post.targets
+        .filter((t) => t.status !== "cancelled")
+        .map((t) => t.connectionId),
+    [post.targets],
+  );
+
+  function toggleConnection(connectionId: string, on: boolean) {
+    const next = on
+      ? Array.from(new Set([...activeIds, connectionId]))
+      : activeIds.filter((id) => id !== connectionId);
+    onChangeChannels(next);
+  }
+
+  // Targets we'd schedule by default in the bulk dialog: pending + failed.
+  const scheduleableTargetIds = post.targets
+    .filter((t) => t.status === "pending" || t.status === "failed")
+    .map((t) => t.id);
+
   return (
-    <Button
-      size="sm"
-      variant={active ? "default" : "outline"}
-      onClick={onClick}
-      disabled={disabled}
+    <div className="card-surface p-5 mb-4">
+      <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
+        <div>
+          <h3 className="font-semibold flex items-center gap-2">
+            <Send className="w-4 h-4 text-accent" /> Publish to
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            Pick the channels for this post. Each channel publishes independently.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={pending || scheduleableTargetIds.length === 0}
+            onClick={() => onSchedule(scheduleableTargetIds)}
+          >
+            <CalendarClock className="w-3.5 h-3.5" /> Schedule selected
+          </Button>
+        </div>
+      </div>
+
+      {post.availableConnections.length === 0 ? (
+        <div className="text-sm text-muted-foreground py-3">
+          No social accounts connected yet.{" "}
+          <Link
+            href={`/app/${slug}/connections`}
+            className="text-accent underline-offset-2 hover:underline"
+          >
+            Connect one
+          </Link>{" "}
+          to publish.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {post.availableConnections.map((c) => {
+            const target = post.targets.find((t) => t.connectionId === c.id) ?? null;
+            const isActive = !!target && target.status !== "cancelled";
+            return (
+              <ChannelRow
+                key={c.id}
+                connection={c}
+                target={target}
+                isActive={isActive}
+                pending={pending}
+                onToggle={(on) => toggleConnection(c.id, on)}
+                onPublishNow={() => target && onPublishNow(target)}
+                onSchedule={() => target && onSchedule([target.id])}
+                onCancel={() => target && onCancelTarget(target)}
+                onReset={() => target && onResetTarget(target)}
+              />
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChannelRow({
+  connection,
+  target,
+  isActive,
+  pending,
+  onToggle,
+  onPublishNow,
+  onSchedule,
+  onCancel,
+  onReset,
+}: {
+  connection: AvailableConnection;
+  target: Target | null;
+  isActive: boolean;
+  pending: boolean;
+  onToggle: (on: boolean) => void;
+  onPublishNow: () => void;
+  onSchedule: () => void;
+  onCancel: () => void;
+  onReset: () => void;
+}) {
+  const meta = TARGET_STATUS_META[target?.status ?? "pending"];
+  const isPosted = target?.status === "posted";
+  const isFailed = target?.status === "failed";
+  const isScheduled = target?.status === "scheduled";
+  const isCancelled = target?.status === "cancelled";
+
+  return (
+    <div
+      className={`border rounded-lg p-3 flex items-start gap-3 ${
+        isActive ? "border-border bg-background" : "border-border/40 bg-secondary/30"
+      }`}
     >
-      {children}
-    </Button>
+      <label className="flex items-center gap-2 cursor-pointer flex-shrink-0 mt-1">
+        <input
+          type="checkbox"
+          checked={isActive}
+          onChange={(e) => onToggle(e.target.checked)}
+          disabled={pending || isPosted}
+          className="w-4 h-4 accent-accent"
+        />
+      </label>
+
+      <div
+        className="w-8 h-8 rounded-lg border flex items-center justify-center flex-shrink-0"
+        style={{ background: `${connection.providerColor}1a`, borderColor: `${connection.providerColor}55` }}
+      >
+        <ProviderGlyph
+          provider={connection.provider}
+          className="w-4 h-4"
+          style={{ color: connection.providerColor }}
+        />
+      </div>
+
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-medium text-sm">{connection.providerName}</span>
+          {connection.accountHandle && (
+            <span className="text-xs font-mono text-muted-foreground">
+              {connection.provider === "instagram" ? "@" : ""}
+              {connection.accountHandle}
+            </span>
+          )}
+          {target && <Badge variant={meta.tone}>{meta.label}</Badge>}
+        </div>
+        {isScheduled && target?.scheduledFor && (
+          <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+            <CalendarClock className="w-3 h-3" /> {formatDate(target.scheduledFor)}
+          </div>
+        )}
+        {isPosted && target?.postedAt && (
+          <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1 flex-wrap">
+            <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+            Posted {formatDate(target.postedAt)}
+            {target.providerUrl && (
+              <a
+                href={target.providerUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-emerald-400 hover:underline inline-flex items-center gap-1"
+              >
+                View <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
+          </div>
+        )}
+        {isFailed && target?.error && (
+          <div className="text-xs text-destructive mt-1 flex items-start gap-1">
+            <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+            <span className="font-mono break-words">
+              {target.error.slice(0, 200)}
+              {target.attempts > 1 ? ` (${target.attempts} attempts)` : ""}
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-shrink-0 gap-1 flex-wrap justify-end">
+        {!isPosted && isActive && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onSchedule}
+            disabled={pending}
+            title="Schedule this channel"
+          >
+            <CalendarClock className="w-3.5 h-3.5" />
+          </Button>
+        )}
+        {!isPosted && isActive && (
+          <Button
+            size="sm"
+            onClick={onPublishNow}
+            disabled={pending}
+            className="bg-emerald-600 hover:bg-emerald-600/90"
+            title="Publish now"
+          >
+            <Send className="w-3.5 h-3.5" /> Now
+          </Button>
+        )}
+        {(isFailed || isCancelled) && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onReset}
+            disabled={pending}
+            title="Reset to pending"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+          </Button>
+        )}
+        {isScheduled && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onCancel}
+            disabled={pending}
+            title="Cancel schedule"
+          >
+            <XCircle className="w-3.5 h-3.5" />
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -400,12 +680,14 @@ function ScheduleDialog({
   onOpenChange,
   onConfirm,
   defaultDate,
+  targetCount,
   pending,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onConfirm: (iso: string) => void;
   defaultDate: string | null;
+  targetCount: number;
   pending: boolean;
 }) {
   const [value, setValue] = useState(() => {
@@ -418,10 +700,12 @@ function ScheduleDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <CalendarClock className="w-4 h-4 text-accent" /> Schedule post
+            <CalendarClock className="w-4 h-4 text-accent" /> Schedule
           </DialogTitle>
           <DialogDescription>
-            Pick when you want this to go live. We&apos;ll just track the time — no auto-publish to Instagram yet.
+            {targetCount === 1
+              ? "Set when this channel will publish."
+              : `Set when these ${targetCount} channels will publish. The cron worker picks them up at the scheduled time.`}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">
@@ -444,7 +728,6 @@ function ScheduleDialog({
   );
 }
 
-/** Convert a Date to the value format the <input type="datetime-local"> expects. */
 function toLocalIsoForInput(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;

@@ -1,4 +1,4 @@
-// Marketingen — multi-tenant Instagram post generator
+// Marketingen — multi-tenant social post generator (IG + LinkedIn, more later)
 generator client {
   provider = "prisma-client-js"
 }
@@ -39,34 +39,44 @@ model Project {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user        User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   brand       Brand?
   campaign    Campaign?
   queueItems  QueueItem[]
   posts       Post[]
-  instagram   InstagramConnection?
+  connections SocialConnection[]
 
   @@unique([userId, slug])
   @@index([userId])
 }
 
-/// One Instagram Business account per project. The OAuth flow stores the
-/// long-lived (60-day) Page access token. Use this token to call all Graph
-/// API endpoints. We refresh it opportunistically before expiry.
-model InstagramConnection {
-  id              String   @id @default(cuid())
-  projectId       String   @unique
-  igUserId        String   // Instagram Business Account ID
-  igUsername      String?
-  pageId          String   // Linked Facebook Page ID
-  pageName        String?
-  accessToken     String   @db.Text
-  tokenExpiresAt  DateTime
-  connectedAt     DateTime @default(now())
-  lastError       String?  @db.Text
-  updatedAt       DateTime @updatedAt
+enum SocialProvider {
+  instagram
+  linkedin
+}
 
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+/// One connected social account per (project, provider). Token storage and
+/// per-provider extras live in `meta` (e.g. ig page id, linkedin person urn).
+model SocialConnection {
+  id              String         @id @default(cuid())
+  projectId       String
+  provider        SocialProvider
+  accountId       String         // platform user/page/account id
+  accountName     String?        // display name
+  accountHandle   String?        // @handle for IG, vanity for LinkedIn
+  accessToken     String         @db.Text
+  refreshToken    String?        @db.Text
+  tokenExpiresAt  DateTime?
+  meta            Json           @default("{}")
+  connectedAt     DateTime       @default(now())
+  lastError       String?        @db.Text
+  updatedAt       DateTime       @updatedAt
+
+  project Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  targets PostTarget[]
+
+  @@unique([projectId, provider])
+  @@index([projectId])
 }
 
 model Brand {
@@ -116,7 +126,7 @@ model QueueItem {
   projectId String
   topic     String
   pillar    String?
-  format    String?  // carousel | story | case-study
+  format    String?  // single | carousel | story | case-study
   notes     String?  @db.Text
   position  Int
   createdAt DateTime @default(now())
@@ -134,6 +144,15 @@ enum PostStatus {
   archived
 }
 
+enum TargetStatus {
+  pending     // selected for posting but not yet scheduled
+  scheduled
+  publishing
+  posted
+  failed
+  cancelled
+}
+
 model Post {
   id            String     @id @default(cuid())
   projectId     String
@@ -147,20 +166,45 @@ model Post {
   slidesJson    Json
   // Rendered image URLs in order
   imageUrls     Json       // string[]
+  // Top-level lifecycle status — derived from PostTarget statuses but
+  // stored for fast filtering/sorting.
   status        PostStatus @default(draft)
+  // Earliest scheduled time across all targets (for sort/calendar).
   scheduledFor  DateTime?
+  // Set when at least one target succeeded.
   postedAt      DateTime?
   createdAt     DateTime   @default(now())
 
-  // Instagram publishing
-  igMediaId       String?    // ID returned by Instagram after a successful publish
-  publishError    String?    @db.Text
-  publishAttempts Int        @default(0)
-  lastAttemptAt   DateTime?
-
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  targets PostTarget[]
 
   @@unique([projectId, name])
   @@index([projectId, status, createdAt])
   @@index([projectId, scheduledFor])
+}
+
+/// Per-channel publish state for a post. One row per (post, connection).
+/// The cron worker iterates these to publish each scheduled target.
+model PostTarget {
+  id              String       @id @default(cuid())
+  postId          String
+  connectionId    String
+  provider        SocialProvider
+  status          TargetStatus @default(pending)
+  scheduledFor    DateTime?
+  postedAt        DateTime?
+  providerPostId  String?      // ig media id, linkedin urn, etc.
+  providerUrl     String?      // direct link to the published post
+  error           String?      @db.Text
+  attempts        Int          @default(0)
+  lastAttemptAt   DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  post       Post             @relation(fields: [postId], references: [id], onDelete: Cascade)
+  connection SocialConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, connectionId])
+  @@index([status, scheduledFor])
+  @@index([postId])
 }

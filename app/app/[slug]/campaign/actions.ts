@@ -2,9 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { requireProject } from "@/lib/auth";
 import { anthropic, ANTHROPIC_MODEL, extractJson } from "@/lib/anthropic";
+import { generateAiPost, type GenContext } from "@/lib/ai-post";
+import { renderAndUploadPost } from "@/lib/render";
+import { type Brand } from "@/lib/slides";
+import { slugify } from "@/lib/utils";
+import { rollupPostStatus } from "@/lib/publish-post";
 
 const pillarSchema = z.object({ name: z.string(), description: z.string() });
 const campaignSchema = z.object({
@@ -128,7 +134,7 @@ export async function aiBuildCampaignAction(slug: string, brief: string) {
   const brand = await db.brand.findUnique({ where: { projectId: project.id } });
   if (!brand) return { error: "Brand not found" };
 
-  const system = `You are a marketing campaign strategist. Given a brand and a brief, produce a complete first campaign for Instagram.
+  const system = `You are a marketing campaign strategist. Given a brand and a brief, produce a complete first social media campaign (Instagram + LinkedIn).
 
 BRAND
 Name: ${brand.name}
@@ -243,7 +249,7 @@ export async function aiSuggestQueueItemsAction(slug: string, count: number = 5)
   const targetCount = Math.max(1, Math.min(15, count | 0));
   const pillars = (campaign.pillars as Array<{ name: string; description: string }>) ?? [];
 
-  const system = `You are an Instagram content strategist for ${brand.name}.
+  const system = `You are a social content strategist for ${brand.name}.
 
 BRAND
 Voice: ${brand.voice}
@@ -312,4 +318,157 @@ Return ONLY valid JSON, no markdown fences:
 
   revalidatePath(`/app/${slug}/campaign`);
   return { ok: true, count: parsed.ideas.length };
+}
+
+// ─── Fill week from queue ─────────────────────────────────────────────
+//
+// Walks the next N items off the queue, generates a post for each,
+// renders the slides, creates a Post + targets at all currently-connected
+// channels, and schedules each post on a consecutive day at the given
+// time-of-day. Returns the count of posts created.
+
+const fillWeekSchema = z.object({
+  // Local-date "YYYY-MM-DD" — interpreted in the server's local TZ.
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  // "HH:MM" 24h.
+  timeOfDay: z.string().regex(/^\d{2}:\d{2}$/),
+  count: z.number().int().min(1).max(7),
+});
+
+export async function fillWeekFromQueueAction(slug: string, input: unknown) {
+  const parsed = fillWeekSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  const { startDate, timeOfDay, count } = parsed.data;
+
+  const { user, project } = await requireProject(slug);
+  const [brand, campaign, queue, connections, recent] = await Promise.all([
+    db.brand.findUnique({ where: { projectId: project.id } }),
+    db.campaign.findUnique({ where: { projectId: project.id } }),
+    db.queueItem.findMany({
+      where: { projectId: project.id },
+      orderBy: { position: "asc" },
+      take: count,
+    }),
+    db.socialConnection.findMany({ where: { projectId: project.id } }),
+    db.post.findMany({
+      where: { projectId: project.id },
+      orderBy: { createdAt: "desc" },
+      take: 8,
+      select: { pillar: true, topic: true, summary: true },
+    }),
+  ]);
+  if (!brand || !campaign) return { error: "Brand or campaign missing" };
+  if (queue.length === 0) return { error: "Queue is empty — add ideas first" };
+
+  const renderBrand: Brand = {
+    name: brand.name,
+    logoSvg: brand.logoSvg,
+    logoImageUrl: brand.logoImageUrl,
+    logoTextBefore: brand.logoTextBefore,
+    logoTextHighlight: brand.logoTextHighlight,
+    logoTextAfter: brand.logoTextAfter,
+    colors: brand.colors as Brand["colors"],
+    fonts: brand.fonts as Brand["fonts"],
+  };
+  const ctx: GenContext = {
+    brand: {
+      name: brand.name,
+      tagline: brand.tagline,
+      voice: brand.voice,
+      audience: brand.audience,
+      anchors: (brand.anchors as Record<string, string>) ?? {},
+      hashtagPool: (brand.hashtagPool as string[]) ?? [],
+      ctaDefault: brand.ctaDefault,
+    },
+    campaign: {
+      name: campaign.name,
+      goal: campaign.goal,
+      frequency: campaign.frequency,
+      formatMix: campaign.formatMix,
+      pillars: (campaign.pillars as Array<{ name: string; description: string }>) ?? [],
+      toneRules: (campaign.toneRules as string[]) ?? [],
+    },
+    recent,
+  };
+
+  const [hh, mm] = timeOfDay.split(":").map(Number);
+  const startParts = startDate.split("-").map(Number);
+  const startD = new Date(startParts[0], startParts[1] - 1, startParts[2], hh, mm, 0, 0);
+
+  let created = 0;
+  for (let i = 0; i < queue.length; i++) {
+    const item = queue[i];
+    let post;
+    try {
+      post = await generateAiPost(item.topic, ctx, {
+        pillar: item.pillar,
+        format: item.format,
+        notes: item.notes,
+      });
+    } catch (e) {
+      console.error("fill-week: AI generation failed for", item.topic, e);
+      continue;
+    }
+
+    let name = slugify(post.name) || "post";
+    let n = 1;
+    while (await db.post.findUnique({ where: { projectId_name: { projectId: project.id, name } } })) {
+      name = `${slugify(post.name)}-${++n}`;
+    }
+
+    let urls: string[];
+    try {
+      urls = await renderAndUploadPost({
+        brand: renderBrand,
+        userId: user.id,
+        projectId: project.id,
+        postName: name,
+        slides: post.slides,
+      });
+    } catch (e) {
+      console.error("fill-week: render failed for", item.topic, e);
+      continue;
+    }
+
+    const scheduledFor = new Date(startD);
+    scheduledFor.setDate(startD.getDate() + i);
+
+    const newPost = await db.$transaction(async (tx) => {
+      const p = await tx.post.create({
+        data: {
+          projectId: project.id,
+          name,
+          topic: post.topic,
+          summary: post.summary,
+          pillar: post.pillar ?? item.pillar,
+          format: post.format ?? item.format,
+          caption: post.caption,
+          slidesJson: post.slides as unknown as Prisma.InputJsonValue,
+          imageUrls: urls as unknown as Prisma.InputJsonValue,
+        },
+      });
+      // One scheduled target per connected channel.
+      for (const c of connections) {
+        await tx.postTarget.create({
+          data: {
+            postId: p.id,
+            connectionId: c.id,
+            provider: c.provider,
+            status: "scheduled",
+            scheduledFor,
+          },
+        });
+      }
+      await tx.queueItem.delete({ where: { id: item.id } });
+      return p;
+    });
+
+    await rollupPostStatus(newPost.id);
+    created++;
+  }
+
+  revalidatePath(`/app/${slug}/calendar`);
+  revalidatePath(`/app/${slug}/posts`);
+  revalidatePath(`/app/${slug}/campaign`);
+  return { ok: true, count: created };
 }

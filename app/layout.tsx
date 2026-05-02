@@ -3,9 +3,9 @@ import { Toaster } from "sonner";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Marketingen — AI Instagram post generator",
+  title: "Marketingen — AI social post generator",
   description:
-    "Multi-tenant Instagram post generator with brand-aware AI campaigns and automatic image rendering.",
+    "Multi-tenant social post generator with brand-aware AI campaigns, multi-channel publishing (Instagram + LinkedIn), and automatic image rendering.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

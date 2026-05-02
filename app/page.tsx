@@ -34,10 +34,10 @@ export default async function Home() {
         <section>
           <div className="eyebrow mb-6">
             <Sparkles className="w-3.5 h-3.5" />
-            AI-powered Instagram campaigns
+            AI-powered social campaigns
           </div>
           <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tight leading-[0.95] mb-6 max-w-4xl">
-            Generate full Instagram campaigns from <span className="accent-text">one idea</span>.
+            Generate full social campaigns from <span className="accent-text">one idea</span>.
           </h1>
           <p className="text-lg text-muted-foreground max-w-2xl leading-relaxed mb-10">
             Set your brand once. Add ideas to a queue. The AI generates on-brand posts that

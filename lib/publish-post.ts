@@ -1,134 +1,197 @@
-// Shared publish flow used by both the manual "Post now" action and the
-// cron worker. Loads the connection, calls Instagram, persists the result.
+// Per-target publish worker. Used by both the manual "post now" action
+// and the scheduled cron route.
 //
-// Returns { ok: true, mediaId } on success or { error } on failure. The
-// caller is responsible for any UI side effects (toast, redirect, etc.).
+// One post can have multiple targets (one per connected social network).
+// Each PostTarget tracks its own publish state, scheduledFor, attempts, and
+// provider-side post id. The cron route picks `scheduled` targets whose
+// scheduledFor has passed and runs them through `publishTargetById`.
 
 import { db } from "./db";
-import { publishToInstagram, refreshLongLivedToken } from "./instagram";
-import type { PostStatus, Prisma } from "@prisma/client";
+import { getProvider } from "./providers";
+import type { Post, PostTarget, Prisma, SocialConnection } from "@prisma/client";
 
 export type PublishResult =
-  | { ok: true; mediaId: string }
-  | { error: string };
+  | { ok: true; providerPostId: string; providerUrl: string | null }
+  | { ok: false; error: string };
 
-export async function publishPostById(postId: string): Promise<PublishResult> {
-  const post = await db.post.findUnique({
-    where: { id: postId },
-    include: { project: { include: { instagram: true } } },
+/**
+ * Publish a single PostTarget. Loads the connection (refreshing the token
+ * if it's near expiry), increments attempts, and persists the result.
+ */
+export async function publishTargetById(targetId: string): Promise<PublishResult> {
+  const target = await db.postTarget.findUnique({
+    where: { id: targetId },
+    include: { post: true, connection: true },
   });
-  if (!post) return { error: "Post not found" };
+  if (!target) return { ok: false, error: "Target not found" };
+  return publishTarget(target);
+}
 
-  const connection = post.project.instagram;
-  if (!connection) {
-    return { error: "Instagram is not connected for this project. Connect it first." };
-  }
+async function publishTarget(
+  target: PostTarget & { post: Post; connection: SocialConnection },
+): Promise<PublishResult> {
+  const provider = getProvider(target.provider);
+  let connection = target.connection;
 
-  const imageUrls = (post.imageUrls as string[]) ?? [];
-  if (imageUrls.length === 0) {
-    return { error: "Post has no images" };
-  }
-
-  // Refresh the user token if it's within 7 days of expiry. Page tokens
-  // derived from a long-lived user token live as long as the user token,
-  // so refreshing the user token effectively keeps the page token fresh.
-  const sevenDays = 7 * 24 * 60 * 60 * 1000;
-  if (connection.tokenExpiresAt.getTime() - Date.now() < sevenDays) {
-    try {
-      const refreshed = await refreshLongLivedToken(connection.accessToken);
-      await db.instagramConnection.update({
+  // Opportunistic token refresh.
+  try {
+    const refreshed = await provider.maybeRefresh?.(connection);
+    if (refreshed) {
+      connection = await db.socialConnection.update({
         where: { id: connection.id },
         data: {
+          accountId: refreshed.accountId,
+          accountName: refreshed.accountName,
+          accountHandle: refreshed.accountHandle,
           accessToken: refreshed.accessToken,
-          tokenExpiresAt: refreshed.expiresAt,
+          refreshToken: refreshed.refreshToken,
+          tokenExpiresAt: refreshed.tokenExpiresAt,
+          meta: refreshed.meta as Prisma.InputJsonValue,
         },
       });
-      connection.accessToken = refreshed.accessToken;
-      connection.tokenExpiresAt = refreshed.expiresAt;
-    } catch (e) {
-      // Log but don't block — the existing token might still work.
-      console.warn("Token refresh failed:", (e as Error).message);
     }
+  } catch (e) {
+    console.warn("Token refresh failed (continuing with existing token):", (e as Error).message);
   }
 
-  // Always increment attempts BEFORE the call so we record retries even
-  // if the publish itself throws part-way through.
-  await db.post.update({
-    where: { id: post.id },
+  const imageUrls = (target.post.imageUrls as string[]) ?? [];
+  const caption = target.post.caption ?? "";
+  const format = target.post.format;
+
+  // Mark as publishing + bump attempts before the call so a thrown error
+  // doesn't leave stale state.
+  await db.postTarget.update({
+    where: { id: target.id },
     data: {
-      publishAttempts: { increment: 1 },
+      status: "publishing",
+      attempts: { increment: 1 },
       lastAttemptAt: new Date(),
     },
   });
 
-  try {
-    const mediaId = await publishToInstagram({
-      igUserId: connection.igUserId,
-      pageAccessToken: connection.accessToken,
-      imageUrls,
-      caption: post.caption,
-      format: (post.format as "single" | "carousel" | "story" | "case-study") ?? "carousel",
-    });
+  const result = await provider.publish(connection, { caption, imageUrls, format });
 
-    await db.post.update({
-      where: { id: post.id },
+  if (result.ok) {
+    await db.postTarget.update({
+      where: { id: target.id },
       data: {
-        status: "posted" as PostStatus,
+        status: "posted",
         postedAt: new Date(),
-        igMediaId: mediaId,
-        publishError: null,
+        providerPostId: result.providerPostId,
+        providerUrl: result.providerUrl,
+        error: null,
       },
     });
-
-    // Clear last connection error on success.
-    await db.instagramConnection.update({
+    await db.socialConnection.update({
       where: { id: connection.id },
       data: { lastError: null },
     });
-
-    return { ok: true, mediaId };
-  } catch (e) {
-    const errMsg = (e as Error).message.slice(0, 1000);
-    await db.post.update({
-      where: { id: post.id },
-      data: { publishError: errMsg },
-    });
-    await db.instagramConnection.update({
-      where: { id: connection.id },
-      data: { lastError: errMsg.slice(0, 500) },
-    });
-    return { error: errMsg };
+    await rollupPostStatus(target.postId);
+    return result;
   }
+
+  const errMsg = result.error.slice(0, 1000);
+  await db.postTarget.update({
+    where: { id: target.id },
+    data: { status: "failed", error: errMsg },
+  });
+  await db.socialConnection.update({
+    where: { id: connection.id },
+    data: { lastError: errMsg.slice(0, 500) },
+  });
+  await rollupPostStatus(target.postId);
+  return result;
 }
 
 /**
- * Find all posts that are due for scheduled publishing and try to publish
- * each one. Used by the cron route. Returns a summary suitable for
- * logging or HTTP response.
+ * Recompute the top-level Post.status / postedAt / scheduledFor from its
+ * targets. Called whenever a target transitions.
+ *
+ * Rules:
+ *   - if all non-cancelled targets are posted -> status=posted
+ *   - else if any target is scheduled         -> status=scheduled
+ *   - else if any target is publishing/pending -> keep current draft/scheduled
+ *   - if there are no active targets at all   -> status=draft
+ *
+ * postedAt = earliest postedAt among posted targets
+ * scheduledFor = earliest scheduledFor among scheduled targets
  */
-export async function publishDueScheduledPosts(now = new Date()): Promise<{
+export async function rollupPostStatus(postId: string): Promise<void> {
+  const post = await db.post.findUnique({
+    where: { id: postId },
+    select: { status: true },
+  });
+  if (!post) return;
+  // Cancelled/archived posts are user-driven and shouldn't be auto-rolled.
+  if (post.status === "cancelled" || post.status === "archived") return;
+
+  const targets = await db.postTarget.findMany({ where: { postId } });
+
+  const active = targets.filter((t) => t.status !== "cancelled");
+  if (active.length === 0) {
+    await db.post.update({
+      where: { id: postId },
+      data: { status: "draft", postedAt: null, scheduledFor: null },
+    });
+    return;
+  }
+
+  const allPosted = active.every((t) => t.status === "posted");
+  const anyScheduled = active.some((t) => t.status === "scheduled");
+
+  const earliestPostedAt = active
+    .map((t) => t.postedAt)
+    .filter((d): d is Date => Boolean(d))
+    .sort((a, b) => a.getTime() - b.getTime())[0];
+
+  const earliestScheduledFor = active
+    .filter((t) => t.status === "scheduled")
+    .map((t) => t.scheduledFor)
+    .filter((d): d is Date => Boolean(d))
+    .sort((a, b) => a.getTime() - b.getTime())[0];
+
+  let nextStatus: "draft" | "scheduled" | "posted" = "draft";
+  if (allPosted) nextStatus = "posted";
+  else if (anyScheduled) nextStatus = "scheduled";
+  // failed-only or pending-only stays as draft for the user to act on.
+
+  await db.post.update({
+    where: { id: postId },
+    data: {
+      status: nextStatus,
+      postedAt: earliestPostedAt ?? null,
+      scheduledFor: earliestScheduledFor ?? null,
+    },
+  });
+}
+
+/**
+ * Find every scheduled target whose time has come and publish it.
+ * Returns a summary suitable for the cron HTTP response.
+ */
+export async function publishDueTargets(now = new Date()): Promise<{
   picked: number;
   succeeded: number;
   failed: number;
-  results: Array<{ postId: string; result: PublishResult }>;
+  results: Array<{ targetId: string; postId: string; result: PublishResult }>;
 }> {
-  const due = await db.post.findMany({
+  const due = await db.postTarget.findMany({
     where: {
       status: "scheduled",
       scheduledFor: { lte: now },
-    } as Prisma.PostWhereInput,
+    },
     orderBy: { scheduledFor: "asc" },
-    take: 20, // sanity cap per run
-    select: { id: true },
+    take: 30,
+    include: { post: true, connection: true },
   });
 
-  const results: Array<{ postId: string; result: PublishResult }> = [];
+  const results: Array<{ targetId: string; postId: string; result: PublishResult }> = [];
   let succeeded = 0;
   let failed = 0;
-  for (const p of due) {
-    const result = await publishPostById(p.id);
-    results.push({ postId: p.id, result });
-    if ("ok" in result) succeeded++;
+  for (const t of due) {
+    const result = await publishTarget(t);
+    results.push({ targetId: t.id, postId: t.postId, result });
+    if (result.ok) succeeded++;
     else failed++;
   }
   return { picked: due.length, succeeded, failed, results };

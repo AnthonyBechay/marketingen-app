@@ -1,7 +1,22 @@
 "use client";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { Save, Plus, X, Sparkles, Trash2, Pencil, ChevronUp, ChevronDown, Check } from "lucide-react";
+import { Save, Plus, X, Sparkles, Trash2, Pencil, GripVertical, Check } from "lucide-react";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,7 +42,7 @@ import {
   addQueueItemAction,
   updateQueueItemAction,
   deleteQueueItemAction,
-  moveQueueItemAction,
+  reorderQueueAction,
   aiBuildCampaignAction,
   aiSuggestQueueItemsAction,
 } from "./actions";
@@ -312,22 +327,21 @@ function QueueSection({
     });
   }
 
-  function onMove(id: string, direction: "up" | "down") {
-    const idx = queue.findIndex((q) => q.id === id);
-    if (idx === -1) return;
-    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-    if (swapIdx < 0 || swapIdx >= queue.length) return;
-    // Optimistic local swap, then persist.
-    setQueue((q) => {
-      const next = [...q];
-      [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
-      return next;
-    });
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+
+  function onDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const oldIdx = queue.findIndex((q) => q.id === active.id);
+    const newIdx = queue.findIndex((q) => q.id === over.id);
+    if (oldIdx === -1 || newIdx === -1) return;
+    const next = arrayMove(queue, oldIdx, newIdx);
+    setQueue(next);
     startTransition(async () => {
-      const res = await moveQueueItemAction(slug, id, direction);
-      if (res?.error) {
-        toast.error(res.error);
-        // Revert on failure
+      try {
+        await reorderQueueAction(slug, next.map((q) => q.id));
+      } catch (e) {
+        toast.error((e as Error).message);
         setQueue(initialQueue);
       }
     });
@@ -415,75 +429,31 @@ function QueueSection({
         {queue.length === 0 ? (
           <p className="text-sm text-muted-foreground italic">No ideas in the queue yet.</p>
         ) : (
-          queue.map((q, i) =>
-            editingId === q.id ? (
-              <QueueItemEditor
-                key={q.id}
-                item={q}
-                pillarNames={pillarNames}
-                onCancel={() => setEditingId(null)}
-                onSave={(patch) => onSaveEdit(q.id, patch)}
-                pending={pending}
-              />
-            ) : (
-              <div key={q.id} className="flex items-start gap-3 border border-border/60 rounded-lg p-3 group">
-                <div className="font-mono text-xs text-muted-foreground mt-1 w-6 flex-shrink-0">#{i + 1}</div>
-
-                {/* Reorder arrows */}
-                <div className="flex flex-col flex-shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => onMove(q.id, "up")}
-                    disabled={i === 0 || pending}
-                    className="text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed leading-none"
-                    title="Move up"
-                  >
-                    <ChevronUp className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onMove(q.id, "down")}
-                    disabled={i === queue.length - 1 || pending}
-                    className="text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed leading-none"
-                    title="Move down"
-                  >
-                    <ChevronDown className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium">{q.topic}</div>
-                  <div className="flex gap-3 text-xs text-muted-foreground mt-1 flex-wrap">
-                    {q.pillar && <span>📌 {q.pillar}</span>}
-                    {q.format && <span>🎨 {q.format}</span>}
-                  </div>
-                  {q.notes && <p className="text-xs text-muted-foreground mt-1">{q.notes}</p>}
-                </div>
-
-                <div className="flex flex-shrink-0">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setEditingId(q.id)}
-                    disabled={pending}
-                    title="Edit"
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => onDelete(q.id)}
-                    disabled={pending}
-                    title="Delete"
-                    className="text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-            ),
-          )
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+            <SortableContext items={queue.map((q) => q.id)} strategy={verticalListSortingStrategy}>
+              {queue.map((q, i) =>
+                editingId === q.id ? (
+                  <QueueItemEditor
+                    key={q.id}
+                    item={q}
+                    pillarNames={pillarNames}
+                    onCancel={() => setEditingId(null)}
+                    onSave={(patch) => onSaveEdit(q.id, patch)}
+                    pending={pending}
+                  />
+                ) : (
+                  <SortableQueueItem
+                    key={q.id}
+                    item={q}
+                    index={i}
+                    pending={pending}
+                    onEdit={() => setEditingId(q.id)}
+                    onDelete={() => onDelete(q.id)}
+                  />
+                ),
+              )}
+            </SortableContext>
+          </DndContext>
         )}
       </div>
     </div>
@@ -545,6 +515,72 @@ function SuggestMoreIdeasButton({ slug }: { slug: string }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function SortableQueueItem({
+  item,
+  index,
+  pending,
+  onEdit,
+  onDelete,
+}: {
+  item: Queue;
+  index: number;
+  pending: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: item.id,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+  };
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="flex items-start gap-3 border border-border/60 rounded-lg p-3 bg-background"
+    >
+      <button
+        type="button"
+        className="text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing flex-shrink-0 mt-0.5"
+        title="Drag to reorder"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="w-4 h-4" />
+      </button>
+      <div className="font-mono text-xs text-muted-foreground mt-1 w-6 flex-shrink-0">
+        #{index + 1}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="font-medium">{item.topic}</div>
+        <div className="flex gap-3 text-xs text-muted-foreground mt-1 flex-wrap">
+          {item.pillar && <span>📌 {item.pillar}</span>}
+          {item.format && <span>🎨 {item.format}</span>}
+        </div>
+        {item.notes && <p className="text-xs text-muted-foreground mt-1">{item.notes}</p>}
+      </div>
+      <div className="flex flex-shrink-0">
+        <Button variant="ghost" size="icon" onClick={onEdit} disabled={pending} title="Edit">
+          <Pencil className="w-4 h-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onDelete}
+          disabled={pending}
+          title="Delete"
+          className="text-muted-foreground hover:text-destructive"
+        >
+          <Trash2 className="w-4 h-4" />
+        </Button>
+      </div>
+    </div>
   );
 }
 

@@ -1,19 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { publishDueScheduledPosts } from "@/lib/publish-post";
+import { publishDueTargets } from "@/lib/publish-post";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * Secured cron endpoint.
- *
- * Hit this every minute (or every 5 minutes — your call) from a cron
- * scheduler. Coolify "Scheduled Tasks" or cron-job.org both work; just
- * pass the secret as a Bearer token.
+ * Secured cron endpoint. Hit this every minute (or every few minutes) from
+ * a cron scheduler. Pass the secret as a Bearer token:
  *
  *   Authorization: Bearer $CRON_SECRET
- *
- * Returns a JSON summary of what was attempted.
  */
 async function handle(req: NextRequest) {
   const expected = process.env.CRON_SECRET;
@@ -27,7 +22,7 @@ async function handle(req: NextRequest) {
   }
 
   try {
-    const summary = await publishDueScheduledPosts();
+    const summary = await publishDueTargets();
     return NextResponse.json({ ok: true, ...summary });
   } catch (e) {
     console.error("publish-scheduled cron failed:", e);
