@@ -4,6 +4,7 @@
 import type { SocialProvider as ProviderEnum } from "@prisma/client";
 import { instagramProvider } from "./instagram";
 import { linkedinProvider } from "./linkedin";
+import { tryGetCreds } from "./credentials";
 import type { SocialProviderImpl } from "./types";
 
 export const providers: Record<ProviderEnum, SocialProviderImpl> = {
@@ -19,12 +20,14 @@ export function getProvider(id: ProviderEnum): SocialProviderImpl {
   return p;
 }
 
-export function providerEnabled(id: ProviderEnum): boolean {
-  // A provider is "enabled" when its OAuth credentials are configured.
-  // The Connections hub uses this to grey out unavailable providers.
-  if (id === "instagram") return Boolean(process.env.META_APP_ID && process.env.META_APP_SECRET);
-  if (id === "linkedin") return Boolean(process.env.LINKEDIN_CLIENT_ID && process.env.LINKEDIN_CLIENT_SECRET);
-  return false;
+/**
+ * A provider is "enabled" when its OAuth credentials are configured —
+ * either in the OAuthApp DB row (admin-managed) or via env vars (legacy).
+ * Async because the DB lookup is async.
+ */
+export async function providerEnabled(id: ProviderEnum): Promise<boolean> {
+  const creds = await tryGetCreds(id);
+  return creds !== null;
 }
 
 export type { SocialProviderImpl } from "./types";

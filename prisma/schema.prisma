@@ -55,6 +55,20 @@ enum SocialProvider {
   linkedin
 }
 
+/// OAuth app credentials, stored per provider so the admin can configure
+/// them in the UI without redeploying. Looked up at OAuth start time and
+/// at every callback. If a row is missing, the provider falls back to env
+/// vars (META_APP_ID etc.) so existing setups keep working.
+model OAuthApp {
+  id           String         @id @default(cuid())
+  provider     SocialProvider @unique
+  clientId     String
+  clientSecret String         @db.Text
+  redirectUri  String
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+}
+
 /// One connected social account per (project, provider). Token storage and
 /// per-provider extras live in `meta` (e.g. ig page id, linkedin person urn).
 model SocialConnection {

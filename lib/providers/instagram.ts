@@ -16,6 +16,7 @@ import type {
   PublishResult,
   SocialProviderImpl,
 } from "./types";
+import { getCreds } from "./credentials";
 
 const FB_API_VERSION = "v23.0";
 const FB_API_BASE = `https://graph.facebook.com/${FB_API_VERSION}`;
@@ -29,26 +30,15 @@ const REQUIRED_SCOPES = [
   "business_management",
 ].join(",");
 
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`${name} is not set`);
-  return v;
-}
-
-function redirectUri() {
-  // We register one redirect URI per provider: METADATA_REDIRECT_URI for
-  // Instagram (kept as-is for backwards compat with existing FB app).
-  return process.env.META_REDIRECT_URI ?? "";
-}
-
 async function exchangeCodeForToken(code: string): Promise<{
   accessToken: string;
   expiresIn: number;
 }> {
+  const creds = await getCreds("instagram");
   const params = new URLSearchParams({
-    client_id: requireEnv("META_APP_ID"),
-    client_secret: requireEnv("META_APP_SECRET"),
-    redirect_uri: redirectUri(),
+    client_id: creds.clientId,
+    client_secret: creds.clientSecret,
+    redirect_uri: creds.redirectUri,
     code,
   });
   const res = await fetch(`${FB_API_BASE}/oauth/access_token?${params}`);
@@ -62,10 +52,11 @@ async function getLongLivedUserToken(shortToken: string): Promise<{
   accessToken: string;
   expiresAt: Date;
 }> {
+  const creds = await getCreds("instagram");
   const params = new URLSearchParams({
     grant_type: "fb_exchange_token",
-    client_id: requireEnv("META_APP_ID"),
-    client_secret: requireEnv("META_APP_SECRET"),
+    client_id: creds.clientId,
+    client_secret: creds.clientSecret,
     fb_exchange_token: shortToken,
   });
   const res = await fetch(`${FB_API_BASE}/oauth/access_token?${params}`);
@@ -169,10 +160,11 @@ export const instagramProvider: SocialProviderImpl = {
   id: "instagram",
   meta: { name: "Instagram", color: "#e1306c" },
 
-  oauthUrl(state: string): string {
+  async oauthUrl(state: string): Promise<string> {
+    const creds = await getCreds("instagram");
     const params = new URLSearchParams({
-      client_id: requireEnv("META_APP_ID"),
-      redirect_uri: redirectUri(),
+      client_id: creds.clientId,
+      redirect_uri: creds.redirectUri,
       scope: REQUIRED_SCOPES,
       response_type: "code",
       state,

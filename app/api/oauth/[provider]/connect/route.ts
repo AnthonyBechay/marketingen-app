@@ -26,9 +26,9 @@ export async function GET(
   }
   const provider = providerParam as SocialProvider;
 
-  if (!providerEnabled(provider)) {
+  if (!(await providerEnabled(provider))) {
     return NextResponse.json(
-      { error: `${provider} OAuth is not configured on this server` },
+      { error: `${provider} OAuth is not configured. An admin must add credentials in Settings.` },
       { status: 500 },
     );
   }
@@ -45,5 +45,6 @@ export async function GET(
   }
 
   const state = signState({ userId: user.id, projectId: project.id, provider });
-  return NextResponse.redirect(getProvider(provider).oauthUrl(state));
+  const url = await getProvider(provider).oauthUrl(state);
+  return NextResponse.redirect(url);
 }

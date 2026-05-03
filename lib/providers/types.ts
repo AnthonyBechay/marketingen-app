@@ -40,8 +40,9 @@ export type AccountInfo = {
 export interface SocialProviderImpl {
   id: ProviderId;
   meta: ProviderMeta;
-  // OAuth: build the dialog URL we redirect the user to.
-  oauthUrl(state: string): string;
+  // OAuth: build the dialog URL we redirect the user to. Async because
+  // credentials may be loaded from the DB (admin-managed).
+  oauthUrl(state: string): Promise<string>;
   // OAuth: callback handler. Given the `code` from the dialog, return
   // everything we need to upsert a SocialConnection.
   exchangeCode(code: string): Promise<AccountInfo>;

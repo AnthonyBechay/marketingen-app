@@ -20,6 +20,7 @@ import type {
   PublishResult,
   SocialProviderImpl,
 } from "./types";
+import { getCreds } from "./credentials";
 
 const LI_AUTH_DIALOG = "https://www.linkedin.com/oauth/v2/authorization";
 const LI_TOKEN = "https://www.linkedin.com/oauth/v2/accessToken";
@@ -29,12 +30,6 @@ const LI_API_VERSION = "202401";
 
 // `openid profile email` for sign-in identity, `w_member_social` to post.
 const REQUIRED_SCOPES = "openid profile email w_member_social";
-
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`${name} is not set`);
-  return v;
-}
 
 type LiUserinfo = {
   sub: string;
@@ -140,11 +135,12 @@ export const linkedinProvider: SocialProviderImpl = {
   id: "linkedin",
   meta: { name: "LinkedIn", color: "#0a66c2" },
 
-  oauthUrl(state: string): string {
+  async oauthUrl(state: string): Promise<string> {
+    const creds = await getCreds("linkedin");
     const params = new URLSearchParams({
       response_type: "code",
-      client_id: requireEnv("LINKEDIN_CLIENT_ID"),
-      redirect_uri: requireEnv("LINKEDIN_REDIRECT_URI"),
+      client_id: creds.clientId,
+      redirect_uri: creds.redirectUri,
       state,
       scope: REQUIRED_SCOPES,
     });
@@ -152,12 +148,13 @@ export const linkedinProvider: SocialProviderImpl = {
   },
 
   async exchangeCode(code: string): Promise<AccountInfo> {
+    const creds = await getCreds("linkedin");
     const params = new URLSearchParams({
       grant_type: "authorization_code",
       code,
-      redirect_uri: requireEnv("LINKEDIN_REDIRECT_URI"),
-      client_id: requireEnv("LINKEDIN_CLIENT_ID"),
-      client_secret: requireEnv("LINKEDIN_CLIENT_SECRET"),
+      redirect_uri: creds.redirectUri,
+      client_id: creds.clientId,
+      client_secret: creds.clientSecret,
     });
     const res = await fetch(LI_TOKEN, {
       method: "POST",
@@ -205,11 +202,12 @@ export const linkedinProvider: SocialProviderImpl = {
       return null;
     }
     try {
+      const creds = await getCreds("linkedin");
       const params = new URLSearchParams({
         grant_type: "refresh_token",
         refresh_token: connection.refreshToken,
-        client_id: requireEnv("LINKEDIN_CLIENT_ID"),
-        client_secret: requireEnv("LINKEDIN_CLIENT_SECRET"),
+        client_id: creds.clientId,
+        client_secret: creds.clientSecret,
       });
       const res = await fetch(LI_TOKEN, {
         method: "POST",
