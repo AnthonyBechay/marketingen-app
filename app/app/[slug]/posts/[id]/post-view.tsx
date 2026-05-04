@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import {
@@ -17,6 +17,14 @@ import {
   Send,
   Plug,
   RotateCcw,
+  Pencil,
+  Check,
+  X as XIcon,
+  Upload,
+  ImagePlus,
+  ImageMinus,
+  ArrowLeft,
+  ArrowRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -32,7 +40,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ProviderGlyph } from "@/components/provider-glyph";
-import { deletePostAction } from "../actions";
+import {
+  deletePostAction,
+  setPostImagesAction,
+  updatePostCaptionAction,
+} from "../actions";
 import {
   cancelTargetAction,
   publishTargetNowAction,
@@ -112,13 +124,103 @@ const TARGET_STATUS_META: Record<
 };
 
 export function PostView({ slug, post }: { slug: string; post: PostViewData }) {
-  const urls = post.imageUrls;
+  const [urls, setUrls] = useState<string[]>(post.imageUrls);
+  const [caption, setCaption] = useState(post.caption);
+  const [editingCaption, setEditingCaption] = useState(false);
   const [pending, startTransition] = useTransition();
   const [scheduleOpen, setScheduleOpen] = useState(false);
   // The schedule dialog operates over the user's currently selected pending
   // targets — by default, all not-yet-posted ones.
   const [scheduleTargetIds, setScheduleTargetIds] = useState<string[]>([]);
   const isStory = post.format === "story";
+
+  // ─── Caption edit ─────────────────────────────────────────────
+  function onSaveCaption() {
+    startTransition(async () => {
+      const res = await updatePostCaptionAction(slug, post.id, caption);
+      if ("error" in res && res.error) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success("Caption saved");
+      setEditingCaption(false);
+    });
+  }
+  function onCancelCaption() {
+    setCaption(post.caption);
+    setEditingCaption(false);
+  }
+
+  // ─── Slide image management ───────────────────────────────────
+  // After every change we persist the URL list with setPostImagesAction.
+  // The change is applied optimistically; on failure we revert.
+  function persistUrls(next: string[]) {
+    const prev = urls;
+    setUrls(next);
+    startTransition(async () => {
+      const res = await setPostImagesAction(slug, post.id, next);
+      if ("error" in res && res.error) {
+        toast.error(res.error);
+        setUrls(prev);
+      }
+    });
+  }
+
+  async function uploadFile(file: File): Promise<string | null> {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch(
+      `/api/upload/post-image?slug=${encodeURIComponent(slug)}&postId=${encodeURIComponent(post.id)}`,
+      { method: "POST", body: fd },
+    );
+    const json = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+    if (!res.ok || !json.url) {
+      toast.error(json.error ?? `Upload failed (${res.status})`);
+      return null;
+    }
+    return json.url;
+  }
+
+  function onReplaceSlide(idx: number, file: File) {
+    startTransition(async () => {
+      const url = await uploadFile(file);
+      if (!url) return;
+      const next = [...urls];
+      next[idx] = url;
+      persistUrls(next);
+      toast.success("Slide replaced");
+    });
+  }
+
+  function onAddSlide(file: File) {
+    if (urls.length >= 10) {
+      toast.error("A post can have at most 10 slides");
+      return;
+    }
+    startTransition(async () => {
+      const url = await uploadFile(file);
+      if (!url) return;
+      persistUrls([...urls, url]);
+      toast.success("Slide added");
+    });
+  }
+
+  function onRemoveSlide(idx: number) {
+    if (urls.length <= 1) {
+      toast.error("A post needs at least one slide");
+      return;
+    }
+    if (!confirm("Remove this slide?")) return;
+    persistUrls(urls.filter((_, i) => i !== idx));
+  }
+
+  function onMoveSlide(idx: number, dir: "left" | "right") {
+    const swap = dir === "left" ? idx - 1 : idx + 1;
+    if (swap < 0 || swap >= urls.length) return;
+    const next = [...urls];
+    [next[idx], next[swap]] = [next[swap], next[idx]];
+    persistUrls(next);
+  }
 
   const StatusIcon = POST_STATUS_META[post.status].icon;
 
@@ -128,7 +230,7 @@ export function PostView({ slug, post }: { slug: string; post: PostViewData }) {
   );
 
   function copy() {
-    navigator.clipboard.writeText(post.caption);
+    navigator.clipboard.writeText(caption);
     toast.success("Caption copied");
   }
 
@@ -327,45 +429,64 @@ export function PostView({ slug, post }: { slug: string; post: PostViewData }) {
             <h3 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
               Slides ({urls.length})
             </h3>
-            {urls.length > 0 && (
-              <Button variant="outline" size="sm" onClick={downloadAll}>
-                <Download className="w-3.5 h-3.5" />
-                {urls.length === 1 ? "Download PNG" : "Download all"}
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              <AddSlideButton
+                onPick={onAddSlide}
+                disabled={pending || urls.length >= 10}
+              />
+              {urls.length > 0 && (
+                <Button variant="outline" size="sm" onClick={downloadAll}>
+                  <Download className="w-3.5 h-3.5" />
+                  {urls.length === 1 ? "Download PNG" : "Download all"}
+                </Button>
+              )}
+            </div>
           </div>
           <div className={isStory && urls.length === 1 ? "max-w-md" : "grid sm:grid-cols-2 gap-3"}>
             {urls.map((url, i) => (
-              <div key={url} className="card-surface overflow-hidden">
-                <div className={isStory ? "aspect-[9/16] bg-secondary" : "aspect-[4/5] bg-secondary"}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={url} alt={`Slide ${i + 1}`} className="w-full h-full object-cover" />
-                </div>
-                <div className="px-3 py-2 flex items-center justify-between">
-                  <span className="text-xs font-mono text-muted-foreground">
-                    {urls.length === 1 ? "Image" : `Slide ${String(i + 1).padStart(2, "0")}`}
-                  </span>
-                  <a
-                    href={url}
-                    download
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-xs text-muted-foreground hover:text-accent inline-flex items-center gap-1"
-                  >
-                    <Download className="w-3 h-3" /> PNG
-                  </a>
-                </div>
-              </div>
+              <SlideCard
+                key={`${i}-${url}`}
+                url={url}
+                index={i}
+                total={urls.length}
+                isStory={isStory}
+                pending={pending}
+                onReplace={(file) => onReplaceSlide(i, file)}
+                onRemove={() => onRemoveSlide(i)}
+                onMove={(dir) => onMoveSlide(i, dir)}
+              />
             ))}
           </div>
         </div>
 
         <div className="space-y-3">
-          <h3 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-            Caption
-          </h3>
-          <Textarea readOnly value={post.caption} rows={18} className="font-mono text-xs" />
-          <Button onClick={copy} className="w-full">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
+              Caption
+            </h3>
+            {editingCaption ? (
+              <div className="flex gap-1">
+                <Button size="sm" variant="outline" onClick={onCancelCaption} disabled={pending}>
+                  <XIcon className="w-3.5 h-3.5" /> Cancel
+                </Button>
+                <Button size="sm" onClick={onSaveCaption} disabled={pending}>
+                  <Check className="w-3.5 h-3.5" /> Save
+                </Button>
+              </div>
+            ) : (
+              <Button size="sm" variant="outline" onClick={() => setEditingCaption(true)}>
+                <Pencil className="w-3.5 h-3.5" /> Edit
+              </Button>
+            )}
+          </div>
+          <Textarea
+            readOnly={!editingCaption}
+            value={caption}
+            onChange={(e) => setCaption(e.target.value)}
+            rows={18}
+            className={`font-mono text-xs ${editingCaption ? "ring-1 ring-accent/40" : ""}`}
+          />
+          <Button onClick={copy} variant="outline" className="w-full">
             <Copy className="w-4 h-4" /> Copy caption
           </Button>
 
@@ -734,4 +855,140 @@ function ScheduleDialog({
 function toLocalIsoForInput(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function SlideCard({
+  url,
+  index,
+  total,
+  isStory,
+  pending,
+  onReplace,
+  onRemove,
+  onMove,
+}: {
+  url: string;
+  index: number;
+  total: number;
+  isStory: boolean;
+  pending: boolean;
+  onReplace: (file: File) => void;
+  onRemove: () => void;
+  onMove: (dir: "left" | "right") => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  return (
+    <div className="card-surface overflow-hidden group">
+      <div className={`relative ${isStory ? "aspect-[9/16] bg-secondary" : "aspect-[4/5] bg-secondary"}`}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={url} alt={`Slide ${index + 1}`} className="w-full h-full object-cover" />
+        {/* Hover overlay actions: replace, remove */}
+        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => inputRef.current?.click()}
+            disabled={pending}
+            title="Replace this slide with an uploaded image"
+          >
+            <Upload className="w-3.5 h-3.5" /> Replace
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onRemove}
+            disabled={pending || total <= 1}
+            className="text-destructive hover:bg-destructive/10 border-destructive/30 bg-background"
+            title="Remove this slide"
+          >
+            <ImageMinus className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) onReplace(f);
+            e.target.value = "";
+          }}
+        />
+      </div>
+      <div className="px-3 py-2 flex items-center justify-between">
+        <span className="text-xs font-mono text-muted-foreground">
+          {total === 1 ? "Image" : `Slide ${String(index + 1).padStart(2, "0")}`}
+        </span>
+        <div className="flex items-center gap-1">
+          {total > 1 && (
+            <>
+              <button
+                type="button"
+                onClick={() => onMove("left")}
+                disabled={pending || index === 0}
+                className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                title="Move left"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onMove("right")}
+                disabled={pending || index === total - 1}
+                className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                title="Move right"
+              >
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
+          <a
+            href={url}
+            download
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-muted-foreground hover:text-accent inline-flex items-center gap-1 ml-1"
+          >
+            <Download className="w-3 h-3" />
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AddSlideButton({
+  onPick,
+  disabled,
+}: {
+  onPick: (file: File) => void;
+  disabled: boolean;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={disabled}
+        onClick={() => inputRef.current?.click()}
+        title="Upload a custom image as a new slide"
+      >
+        <ImagePlus className="w-3.5 h-3.5" /> Add image
+      </Button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onPick(f);
+          e.target.value = "";
+        }}
+      />
+    </>
+  );
 }

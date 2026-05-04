@@ -1,10 +1,11 @@
 "use server";
 
-// "use server" files may only export async functions. Type aliases live in
-// _types.ts (sibling) so client components can still import them.
+// "use server" files may only export async functions.
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { requireProject } from "@/lib/auth";
 import { deletePrefix, postPrefix } from "@/lib/r2";
@@ -69,4 +70,44 @@ export async function deletePostAction(slug: string, postId: string) {
   await db.post.delete({ where: { id: postId } });
   revalidatePath(`/app/${slug}/posts`);
   redirect(`/app/${slug}/posts`);
+}
+
+const captionSchema = z.string().max(8000);
+
+export async function updatePostCaptionAction(slug: string, postId: string, caption: string) {
+  const { project } = await requireProject(slug);
+  const parsed = captionSchema.safeParse(caption);
+  if (!parsed.success) return { error: "Caption too long (max 8000 chars)" };
+
+  await db.post.updateMany({
+    where: { id: postId, projectId: project.id },
+    data: { caption: parsed.data },
+  });
+  revalidatePath(`/app/${slug}/posts/${postId}`);
+  return { ok: true };
+}
+
+const imagesSchema = z.array(z.string().url()).max(10);
+
+/**
+ * Replace the post's image list with the given URLs (in order). Used by
+ * the post detail page after the user uploads a custom photo or reorders
+ * slides. The actual upload-to-R2 happens in /api/upload/post-image so
+ * we can stream the multipart body directly.
+ */
+export async function setPostImagesAction(
+  slug: string,
+  postId: string,
+  imageUrls: string[],
+) {
+  const { project } = await requireProject(slug);
+  const parsed = imagesSchema.safeParse(imageUrls);
+  if (!parsed.success) return { error: "Invalid image URLs" };
+
+  await db.post.updateMany({
+    where: { id: postId, projectId: project.id },
+    data: { imageUrls: parsed.data as unknown as Prisma.InputJsonValue },
+  });
+  revalidatePath(`/app/${slug}/posts/${postId}`);
+  return { ok: true };
 }

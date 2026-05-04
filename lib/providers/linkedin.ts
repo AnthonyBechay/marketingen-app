@@ -26,7 +26,10 @@ const LI_AUTH_DIALOG = "https://www.linkedin.com/oauth/v2/authorization";
 const LI_TOKEN = "https://www.linkedin.com/oauth/v2/accessToken";
 const LI_USERINFO = "https://api.linkedin.com/v2/userinfo";
 const LI_API = "https://api.linkedin.com/rest";
-const LI_API_VERSION = "202401";
+// LinkedIn versions older than ~12 months get retired and reject calls
+// with HTTP 426 NONEXISTENT_VERSION. Override via env when LinkedIn rotates
+// without a redeploy.
+const LI_API_VERSION = process.env.LINKEDIN_API_VERSION || "202508";
 
 // `openid profile email` for sign-in identity, `w_member_social` to post.
 const REQUIRED_SCOPES = "openid profile email w_member_social";
