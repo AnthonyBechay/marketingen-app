@@ -1,10 +1,32 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireProject } from "@/lib/auth";
 import type { SocialProvider } from "@prisma/client";
 import { rollupPostStatus } from "@/lib/publish-post";
+
+const labelSchema = z.string().max(60);
+
+export async function updateConnectionLabelAction(
+  slug: string,
+  provider: SocialProvider,
+  customLabel: string,
+) {
+  const { project } = await requireProject(slug);
+  const parsed = labelSchema.safeParse(customLabel);
+  if (!parsed.success) return { error: "Label too long (max 60 chars)" };
+
+  await db.socialConnection.updateMany({
+    where: { projectId: project.id, provider },
+    data: { customLabel: parsed.data.trim() || null },
+  });
+
+  revalidatePath(`/app/${slug}/connections`);
+  revalidatePath(`/app/${slug}`);
+  return { ok: true };
+}
 
 export async function disconnectAction(slug: string, provider: SocialProvider) {
   const { project } = await requireProject(slug);

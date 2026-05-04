@@ -36,9 +36,13 @@ export default async function ConnectionsPage({
       enabled: enabledFlags[i] as boolean,
       connection: conn
         ? {
+            accountId: conn.accountId,
             accountName: conn.accountName,
             accountHandle: conn.accountHandle,
+            customLabel: conn.customLabel,
             tokenExpiresAt: conn.tokenExpiresAt?.toISOString() ?? null,
+            connectedAt: conn.connectedAt.toISOString(),
+            updatedAt: conn.updatedAt.toISOString(),
             lastError: conn.lastError,
           }
         : null,

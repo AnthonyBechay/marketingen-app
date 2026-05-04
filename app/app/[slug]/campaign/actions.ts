@@ -341,7 +341,7 @@ export async function fillWeekFromQueueAction(slug: string, input: unknown) {
   const { startDate, timeOfDay, count } = parsed.data;
 
   const { user, project } = await requireProject(slug);
-  const [brand, campaign, queue, connections, recent] = await Promise.all([
+  const [brand, campaign, queue, connections, recentRows] = await Promise.all([
     db.brand.findUnique({ where: { projectId: project.id } }),
     db.campaign.findUnique({ where: { projectId: project.id } }),
     db.queueItem.findMany({
@@ -351,12 +351,23 @@ export async function fillWeekFromQueueAction(slug: string, input: unknown) {
     }),
     db.socialConnection.findMany({ where: { projectId: project.id } }),
     db.post.findMany({
-      where: { projectId: project.id },
-      orderBy: { createdAt: "desc" },
-      take: 8,
-      select: { pillar: true, topic: true, summary: true },
+      where: { projectId: project.id, status: { not: "archived" } },
+      orderBy: [{ postedAt: "desc" }, { createdAt: "desc" }],
+      take: 12,
+      include: {
+        targets: { where: { status: "posted" }, select: { provider: true } },
+      },
     }),
   ]);
+  const recent = recentRows.map((p) => ({
+    pillar: p.pillar,
+    topic: p.topic,
+    summary: p.summary,
+    format: p.format,
+    status: p.status,
+    postedAt: p.postedAt?.toISOString() ?? null,
+    channels: Array.from(new Set(p.targets.map((t) => t.provider))),
+  }));
   if (!brand || !campaign) return { error: "Brand or campaign missing" };
   if (queue.length === 0) return { error: "Queue is empty — add ideas first" };
 

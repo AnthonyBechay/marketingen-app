@@ -68,6 +68,7 @@ export type AvailableConnection = {
   providerColor: string;
   accountHandle: string | null;
   accountName: string | null;
+  customLabel: string | null;
 };
 
 export type PostViewData = {
@@ -584,7 +585,9 @@ function ChannelRow({
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-medium text-sm">{connection.providerName}</span>
+          <span className="font-medium text-sm">
+            {connection.customLabel || connection.providerName}
+          </span>
           {connection.accountHandle && (
             <span className="text-xs font-mono text-muted-foreground">
               {connection.provider === "instagram" ? "@" : ""}

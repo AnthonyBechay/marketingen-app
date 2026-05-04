@@ -76,8 +76,9 @@ model SocialConnection {
   projectId       String
   provider        SocialProvider
   accountId       String         // platform user/page/account id
-  accountName     String?        // display name
+  accountName     String?        // display name (from provider)
   accountHandle   String?        // @handle for IG, vanity for LinkedIn
+  customLabel     String?        // user-set label override (e.g. "Brand IG")
   accessToken     String         @db.Text
   refreshToken    String?        @db.Text
   tokenExpiresAt  DateTime?

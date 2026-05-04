@@ -1,5 +1,5 @@
 "use client";
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -10,11 +10,17 @@ import {
   CheckCircle2,
   RefreshCw,
   Settings,
+  Pencil,
+  Check,
+  X,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { ProviderGlyph } from "@/components/provider-glyph";
-import { disconnectAction } from "./actions";
+import { disconnectAction, updateConnectionLabelAction } from "./actions";
+import { formatDate } from "@/lib/utils";
 import type { SocialProvider } from "@prisma/client";
 
 export type ConnectionRow = {
@@ -23,9 +29,13 @@ export type ConnectionRow = {
   providerColor: string;
   enabled: boolean;
   connection: {
+    accountId: string;
     accountName: string | null;
     accountHandle: string | null;
+    customLabel: string | null;
     tokenExpiresAt: string | null;
+    connectedAt: string;
+    updatedAt: string;
     lastError: string | null;
   } | null;
 };
@@ -59,6 +69,9 @@ function ProviderRow({
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [labelDraft, setLabelDraft] = useState(row.connection?.customLabel ?? "");
+  const [showDetails, setShowDetails] = useState(false);
 
   function onConnect() {
     window.location.href = `/api/oauth/${row.provider}/connect?slug=${encodeURIComponent(slug)}`;
@@ -79,6 +92,19 @@ function ProviderRow({
       } catch (e) {
         toast.error((e as Error).message);
       }
+    });
+  }
+
+  function onSaveLabel() {
+    startTransition(async () => {
+      const res = await updateConnectionLabelAction(slug, row.provider, labelDraft);
+      if ("error" in res && res.error) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success("Label updated");
+      setEditingLabel(false);
+      router.refresh();
     });
   }
 
@@ -119,7 +145,11 @@ function ProviderRow({
             className="w-10 h-10 rounded-xl border flex items-center justify-center flex-shrink-0"
             style={{ background: `${row.providerColor}1a`, borderColor: `${row.providerColor}55` }}
           >
-            <ProviderGlyph provider={row.provider} className="w-5 h-5" style={{ color: row.providerColor }} />
+            <ProviderGlyph
+              provider={row.provider}
+              className="w-5 h-5"
+              style={{ color: row.providerColor }}
+            />
           </div>
           <div className="flex-1 min-w-0">
             <div className="font-semibold">{row.providerName}</div>
@@ -138,12 +168,13 @@ function ProviderRow({
     );
   }
 
-  // Connected.
-  const expiresAt = row.connection.tokenExpiresAt ? new Date(row.connection.tokenExpiresAt) : null;
+  const c = row.connection;
+  const expiresAt = c.tokenExpiresAt ? new Date(c.tokenExpiresAt) : null;
   const daysLeft = expiresAt
     ? Math.max(0, Math.round((expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
     : null;
   const tokenWarning = daysLeft !== null && daysLeft <= 7;
+  const displayName = c.customLabel || row.providerName;
 
   return (
     <div className="card-surface p-5">
@@ -152,24 +183,66 @@ function ProviderRow({
           className="w-10 h-10 rounded-xl border flex items-center justify-center flex-shrink-0"
           style={{ background: `${row.providerColor}26`, borderColor: `${row.providerColor}66` }}
         >
-          <ProviderGlyph provider={row.provider} className="w-5 h-5" style={{ color: row.providerColor }} />
+          <ProviderGlyph
+            provider={row.provider}
+            className="w-5 h-5"
+            style={{ color: row.providerColor }}
+          />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1 flex-wrap">
-            <h3 className="font-semibold">{row.providerName}</h3>
-            <Badge variant="success">
-              <CheckCircle2 className="w-3 h-3 mr-1" /> Live
-            </Badge>
-          </div>
+          {editingLabel ? (
+            <div className="flex items-center gap-2 mb-1">
+              <Input
+                autoFocus
+                value={labelDraft}
+                onChange={(e) => setLabelDraft(e.target.value)}
+                placeholder={`e.g. "${row.providerName} – ${row.providerName === "Instagram" ? "Brand" : "Founder"}"`}
+                maxLength={60}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") onSaveLabel();
+                  if (e.key === "Escape") setEditingLabel(false);
+                }}
+                className="h-8 text-sm max-w-xs"
+              />
+              <Button size="icon" variant="default" onClick={onSaveLabel} disabled={pending}>
+                <Check className="w-3.5 h-3.5" />
+              </Button>
+              <Button
+                size="icon"
+                variant="outline"
+                onClick={() => {
+                  setEditingLabel(false);
+                  setLabelDraft(c.customLabel ?? "");
+                }}
+              >
+                <X className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <h3 className="font-semibold">{displayName}</h3>
+              <button
+                type="button"
+                onClick={() => setEditingLabel(true)}
+                className="text-muted-foreground hover:text-foreground"
+                title="Edit label"
+              >
+                <Pencil className="w-3 h-3" />
+              </button>
+              <Badge variant="success">
+                <CheckCircle2 className="w-3 h-3 mr-1" /> Live
+              </Badge>
+            </div>
+          )}
           <div className="text-sm text-muted-foreground space-y-0.5">
-            {row.connection.accountHandle && (
+            {c.accountHandle && (
               <div className="font-mono">
                 {row.provider === "instagram" ? "@" : ""}
-                {row.connection.accountHandle}
+                {c.accountHandle}
               </div>
             )}
-            {row.connection.accountName && row.connection.accountName !== row.connection.accountHandle && (
-              <div className="text-xs">{row.connection.accountName}</div>
+            {c.accountName && c.accountName !== c.accountHandle && (
+              <div className="text-xs">{c.accountName}</div>
             )}
             {daysLeft !== null && (
               <div className="text-xs">
@@ -179,18 +252,49 @@ function ProviderRow({
             )}
           </div>
 
-          {row.connection.lastError && (
+          {c.lastError && (
             <div className="mt-3 flex items-start gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-md p-2.5">
               <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
               <div>
                 <div className="font-semibold mb-0.5">Last error</div>
-                <div className="font-mono text-[11px] opacity-80 break-words">{row.connection.lastError}</div>
+                <div className="font-mono text-[11px] opacity-80 break-words">{c.lastError}</div>
               </div>
             </div>
           )}
+
+          <button
+            type="button"
+            onClick={() => setShowDetails((v) => !v)}
+            className="mt-3 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <ChevronDown className={`w-3 h-3 transition-transform ${showDetails ? "rotate-180" : ""}`} />
+            {showDetails ? "Hide details" : "Show details"}
+          </button>
+          {showDetails && (
+            <dl className="mt-2 grid grid-cols-[120px_1fr] gap-x-3 gap-y-1 text-xs font-mono text-muted-foreground">
+              <dt>Account ID</dt>
+              <dd className="break-all text-foreground/80">{c.accountId}</dd>
+              <dt>Connected</dt>
+              <dd className="text-foreground/80">{formatDate(c.connectedAt)}</dd>
+              <dt>Last refresh</dt>
+              <dd className="text-foreground/80">{formatDate(c.updatedAt)}</dd>
+              {expiresAt && (
+                <>
+                  <dt>Token expires</dt>
+                  <dd className="text-foreground/80">{formatDate(c.tokenExpiresAt!)}</dd>
+                </>
+              )}
+            </dl>
+          )}
         </div>
         <div className="flex flex-col gap-2 flex-shrink-0">
-          <Button variant="outline" size="sm" onClick={onConnect} disabled={pending} title="Reconnect (refreshes token)">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onConnect}
+            disabled={pending}
+            title="Reconnect (refreshes token + re-authorizes)"
+          >
             <RefreshCw className="w-3.5 h-3.5" /> Reconnect
           </Button>
           <Button variant="outline" size="sm" onClick={onDisconnect} disabled={pending}>

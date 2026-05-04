@@ -93,7 +93,15 @@ export type GenContext = {
     pillars: Array<{ name: string; description: string }>;
     toneRules: string[];
   };
-  recent: Array<{ pillar: string | null; topic: string; summary: string }>;
+  recent: Array<{
+    pillar: string | null;
+    topic: string;
+    summary: string;
+    format: string | null;
+    status: "draft" | "scheduled" | "posted" | "cancelled" | "archived";
+    postedAt: string | null;            // ISO if posted
+    channels: string[];                  // e.g. ["instagram", "linkedin"]
+  }>;
 };
 
 function buildSystemPrompt(ctx: GenContext): string {
@@ -105,7 +113,17 @@ function buildSystemPrompt(ctx: GenContext): string {
   const hashtags = ctx.brand.hashtagPool.join(" ");
   const recent = ctx.recent.length
     ? ctx.recent
-        .map((p) => `  - [${p.pillar ?? "?"}] ${p.topic} — ${p.summary.slice(0, 120)}`)
+        .map((p) => {
+          const channels = p.channels.length ? ` → ${p.channels.join("+")}` : "";
+          const when = p.postedAt
+            ? ` · posted ${p.postedAt.slice(0, 10)}`
+            : p.status === "scheduled"
+              ? " · scheduled"
+              : p.status === "draft"
+                ? " · draft"
+                : "";
+          return `  - [${p.pillar ?? "?"} / ${p.format ?? "?"}${channels}${when}] ${p.topic} — ${p.summary.slice(0, 120)}`;
+        })
         .join("\n")
     : "  (none yet)";
   const cta = ctx.brand.ctaDefault;
