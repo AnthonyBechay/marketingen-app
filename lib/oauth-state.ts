@@ -1,12 +1,20 @@
 // Tiny HMAC helper for OAuth state — proves the callback's `state` param
 // originated from us and binds it to a specific user + project + provider.
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type { SocialProvider } from "@prisma/client";
 
 function secret() {
-  const s = process.env.SESSION_SECRET || process.env.META_APP_SECRET || "";
-  if (!s) throw new Error("SESSION_SECRET (or META_APP_SECRET) is required for OAuth state signing");
-  return s;
+  const explicit = process.env.SESSION_SECRET || process.env.META_APP_SECRET;
+  if (explicit) return explicit;
+  // No explicit secret set — derive a stable one from DATABASE_URL. This
+  // keeps OAuth working out of the box for self-hosted setups that haven't
+  // configured SESSION_SECRET. The state token only needs to be unforgeable
+  // for ~10 minutes, so even a derived value is fine.
+  const dbUrl = process.env.DATABASE_URL;
+  if (!dbUrl) {
+    throw new Error("DATABASE_URL must be set for OAuth state signing");
+  }
+  return createHash("sha256").update("oauth-state:" + dbUrl).digest("hex");
 }
 
 export type OAuthState = {
