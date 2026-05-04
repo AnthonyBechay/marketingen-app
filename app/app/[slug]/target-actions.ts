@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireProject } from "@/lib/auth";
 import { publishTargetById, rollupPostStatus } from "@/lib/publish-post";
-import type { SocialProvider, TargetStatus } from "@prisma/client";
+import type { SocialProvider } from "@prisma/client";
 
 /**
  * Replace the set of channels a post targets. For each connection in
@@ -198,5 +198,6 @@ export async function setPostLifecycleAction(
   return { ok: true };
 }
 
-// Re-exported provider type so client components don't import @prisma/client.
-export type { SocialProvider, TargetStatus };
+// We avoid type re-exports here on purpose: a "use server" file may only
+// export async functions. Anywhere a client component needs SocialProvider
+// or TargetStatus, import them from @prisma/client directly with `import type`.

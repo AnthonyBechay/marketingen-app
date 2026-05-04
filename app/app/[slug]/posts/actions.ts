@@ -1,12 +1,15 @@
 "use server";
 
+// "use server" files may only export async functions. Type aliases live in
+// _types.ts (sibling) so client components can still import them.
+
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { requireProject } from "@/lib/auth";
 import { deletePrefix, postPrefix } from "@/lib/r2";
 
-export type PostStatus = "draft" | "scheduled" | "posted" | "cancelled" | "archived";
+type PostStatus = "draft" | "scheduled" | "posted" | "cancelled" | "archived";
 
 export async function setPostStatusAction(
   slug: string,
