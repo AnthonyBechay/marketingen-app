@@ -42,13 +42,13 @@ export function OAuthAppForm({
       return;
     }
     startTransition(async () => {
+      // Sending an empty clientSecret on update tells the server to preserve
+      // the existing secret. The form intentionally does not store the
+      // current secret in client state.
       const res = await saveOAuthAppAction({
         provider,
         clientId,
-        // If editing and the user left secret blank, the server will reject;
-        // we require a non-empty secret on every save. This is conservative —
-        // it means re-pasting the secret to make changes. Fine tradeoff.
-        clientSecret: clientSecret || (existing ? existing.clientSecret : ""),
+        clientSecret,
         redirectUri,
       });
       if ("error" in res && res.error) {

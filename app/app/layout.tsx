@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/admin";
 import { UserMenu } from "./_components/user-menu";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -13,7 +14,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <span className="accent-text">en</span>
           </Link>
         </div>
-        <UserMenu email={user.email} />
+        <UserMenu email={user.email} isAdmin={isAdmin(user.email)} />
       </header>
       <main className="flex-1">{children}</main>
     </div>
