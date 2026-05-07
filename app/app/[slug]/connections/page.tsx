@@ -29,6 +29,17 @@ export default async function ConnectionsPage({
   const rows: ConnectionRow[] = PROVIDER_LIST.map((id, i) => {
     const conn = existing.find((c) => c.provider === id) ?? null;
     const meta = getProvider(id).meta;
+    // Surface LinkedIn-specific author info so the UI can render the
+    // "Posting as" selector. Other providers can ignore these fields.
+    const cMeta = (conn?.meta as Record<string, unknown>) ?? {};
+    const personUrn =
+      (cMeta.personUrn as string | undefined) ??
+      (conn ? `urn:li:person:${conn.accountId}` : null);
+    const personName = (cMeta.personName as string | undefined) ?? conn?.accountName ?? null;
+    const authorUrn = (cMeta.authorUrn as string | undefined) ?? personUrn ?? null;
+    const organizations =
+      (cMeta.organizations as Array<{ urn: string; id: string; name: string; vanityName: string | null }> | undefined) ??
+      [];
     return {
       provider: id,
       providerName: meta.name,
@@ -44,6 +55,10 @@ export default async function ConnectionsPage({
             connectedAt: conn.connectedAt.toISOString(),
             updatedAt: conn.updatedAt.toISOString(),
             lastError: conn.lastError,
+            authorUrn,
+            personUrn,
+            personName,
+            organizations,
           }
         : null,
     };

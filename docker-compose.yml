@@ -1,15 +1,41 @@
 # ─────────────────────────────────────────────────────────────────
 # Production / Coolify deploy.
 #
-# Assumes:
-#   - Postgres lives elsewhere (your Hetzner server). Pass DATABASE_URL.
-#   - The `coolify` network exists (Coolify creates it).
-#   - Coolify's reverse proxy handles port mapping (no `ports:` here).
+# Every env var below is read from the Coolify (or any docker-compose)
+# environment at runtime — nothing is baked into the image. That means
+# you can change the public hostname, OAuth credentials, or admin list
+# at go-live without rebuilding.
 #
-# Set these env vars in the Coolify UI:
-#   DATABASE_URL, ANTHROPIC_API_KEY, R2_ACCOUNT_ID, R2_ACCESS_KEY_ID,
-#   R2_SECRET_ACCESS_KEY, R2_BUCKET, R2_PUBLIC_URL
-#   (Optional) ANTHROPIC_MODEL — defaults to claude-sonnet-4-5.
+# Required at runtime:
+#   DATABASE_URL              postgres://… (Postgres lives elsewhere)
+#   ANTHROPIC_API_KEY         Claude API key
+#   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY,
+#   R2_BUCKET, R2_PUBLIC_URL  Cloudflare R2 storage
+#
+# Recommended:
+#   PUBLIC_URL                Public origin (e.g. https://your.domain).
+#                             Used to pre-fill OAuth redirect URIs in the
+#                             /admin/oauth form. If unset, the app falls
+#                             back to the request's x-forwarded-host so
+#                             admins still get a sensible default.
+#   SESSION_SECRET            Random 32+ char string — signs OAuth state.
+#                             If unset, a stable value is derived from
+#                             DATABASE_URL automatically; setting one
+#                             explicitly is still better hygiene.
+#   CRON_SECRET               Required if you wire up the
+#                             /api/cron/publish-scheduled endpoint.
+#   ADMIN_EMAILS              Comma-separated list of emails that get
+#                             access to /admin/oauth.
+#
+# Optional:
+#   ANTHROPIC_MODEL           Defaults to claude-sonnet-4-5.
+#   LINKEDIN_API_VERSION      Override LinkedIn versioned API (YYYYMM).
+#                             Bump if LinkedIn retires the current one.
+#
+# OAuth app credentials (Meta + LinkedIn) are managed at runtime via the
+# /admin/oauth UI and stored in the OAuthApp table — no env vars needed
+# for them. The legacy *_CLIENT_ID / *_CLIENT_SECRET / *_REDIRECT_URI
+# vars below are still honored as a fallback if no DB row exists.
 #
 # For local dev with a containerized Postgres, use docker-compose.dev.yml.
 # ─────────────────────────────────────────────────────────────────
@@ -20,17 +46,43 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
+      # Container runtime
       NODE_ENV: production
       PORT: 3000
+      # Bind to all interfaces inside the container — Coolify's proxy
+      # reaches the app via this. This is NOT the public URL.
       HOSTNAME: 0.0.0.0
+
+      # Core
       DATABASE_URL: '${DATABASE_URL}'
       ANTHROPIC_API_KEY: '${ANTHROPIC_API_KEY}'
       ANTHROPIC_MODEL: '${ANTHROPIC_MODEL:-claude-sonnet-4-5}'
+
+      # R2 storage
       R2_ACCOUNT_ID: '${R2_ACCOUNT_ID}'
       R2_ACCESS_KEY_ID: '${R2_ACCESS_KEY_ID}'
       R2_SECRET_ACCESS_KEY: '${R2_SECRET_ACCESS_KEY}'
       R2_BUCKET: '${R2_BUCKET}'
       R2_PUBLIC_URL: '${R2_PUBLIC_URL}'
+
+      # Public origin + secrets — set these in Coolify
+      PUBLIC_URL: '${PUBLIC_URL:-}'
+      SESSION_SECRET: '${SESSION_SECRET:-}'
+      CRON_SECRET: '${CRON_SECRET:-}'
+      ADMIN_EMAILS: '${ADMIN_EMAILS:-}'
+
+      # LinkedIn API version override (optional)
+      LINKEDIN_API_VERSION: '${LINKEDIN_API_VERSION:-}'
+
+      # Legacy OAuth-via-env fallbacks. Prefer /admin/oauth (DB-backed)
+      # for everything below; these are only read if the OAuthApp row
+      # for the provider doesn't exist.
+      META_APP_ID: '${META_APP_ID:-}'
+      META_APP_SECRET: '${META_APP_SECRET:-}'
+      META_REDIRECT_URI: '${META_REDIRECT_URI:-}'
+      LINKEDIN_CLIENT_ID: '${LINKEDIN_CLIENT_ID:-}'
+      LINKEDIN_CLIENT_SECRET: '${LINKEDIN_CLIENT_SECRET:-}'
+      LINKEDIN_REDIRECT_URI: '${LINKEDIN_REDIRECT_URI:-}'
     networks:
       - coolify
     healthcheck:

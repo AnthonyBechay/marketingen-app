@@ -31,8 +31,20 @@ const LI_API = "https://api.linkedin.com/rest";
 // without a redeploy.
 const LI_API_VERSION = process.env.LINKEDIN_API_VERSION || "202508";
 
-// `openid profile email` for sign-in identity, `w_member_social` to post.
-const REQUIRED_SCOPES = "openid profile email w_member_social";
+// Scopes:
+//   openid profile email     — OIDC sign-in identity (the human)
+//   w_member_social          — post to the member's own feed
+//   r_organization_admin     — list Pages the member admins
+//   w_organization_social    — post on those Pages' behalf
+//
+// `r_organization_admin` and `w_organization_social` require LinkedIn's
+// "Marketing Developer Platform" product approval on the app. If your app
+// doesn't have it yet, LinkedIn will silently drop those scopes and the
+// connection will only be able to post personally — that's why the
+// organization fetch below is wrapped in a try/catch instead of failing
+// the whole OAuth.
+const REQUIRED_SCOPES =
+  "openid profile email w_member_social r_organization_admin w_organization_social";
 
 type LiUserinfo = {
   sub: string;
@@ -50,6 +62,87 @@ async function fetchUserinfo(accessToken: string): Promise<LiUserinfo> {
   const text = await res.text();
   if (!res.ok) throw new Error(`LinkedIn userinfo failed: ${text}`);
   return JSON.parse(text) as LiUserinfo;
+}
+
+export type LiOrganization = {
+  urn: string;          // urn:li:organization:{id}
+  id: string;
+  name: string;
+  vanityName: string | null;
+};
+
+/**
+ * Fetch the Pages this access token can administer (and post on behalf of).
+ * Requires `r_organization_admin` scope. Returns [] if the scope wasn't
+ * granted (LinkedIn returns 403 in that case) so the caller doesn't have
+ * to special-case it.
+ */
+async function fetchAdminOrganizations(accessToken: string): Promise<LiOrganization[]> {
+  // organizationAcls returns role assignments; we filter to ADMINISTRATOR
+  // role and APPROVED state, then dereference each organization to get a
+  // human-friendly name.
+  const aclRes = await fetch(
+    `${LI_API}/organizationAcls?q=roleAssignee&role=ADMINISTRATOR&state=APPROVED`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "LinkedIn-Version": LI_API_VERSION,
+        "X-Restli-Protocol-Version": "2.0.0",
+      },
+    },
+  );
+  if (aclRes.status === 403 || aclRes.status === 401) {
+    // The app isn't approved for r_organization_admin, OR the user has no
+    // org admin roles. Either way, no orgs to surface.
+    return [];
+  }
+  const aclText = await aclRes.text();
+  if (!aclRes.ok) {
+    console.warn("LinkedIn organizationAcls failed:", aclText);
+    return [];
+  }
+  const acl = JSON.parse(aclText) as {
+    elements?: Array<{ organization?: string; organizationalTarget?: string }>;
+  };
+  const orgUrns = (acl.elements ?? [])
+    .map((e) => e.organization ?? e.organizationalTarget)
+    .filter((u): u is string => Boolean(u));
+  if (orgUrns.length === 0) return [];
+
+  // Fetch each org in parallel. We tolerate per-org failures.
+  const orgs: LiOrganization[] = [];
+  await Promise.all(
+    orgUrns.map(async (urn) => {
+      const id = urn.replace(/^urn:li:organization:/, "");
+      try {
+        const res = await fetch(
+          `${LI_API}/organizations/${encodeURIComponent(id)}?fields=id,localizedName,vanityName`,
+          {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "LinkedIn-Version": LI_API_VERSION,
+              "X-Restli-Protocol-Version": "2.0.0",
+            },
+          },
+        );
+        if (!res.ok) return;
+        const j = (await res.json()) as {
+          id: number | string;
+          localizedName?: string;
+          vanityName?: string;
+        };
+        orgs.push({
+          urn: `urn:li:organization:${j.id}`,
+          id: String(j.id),
+          name: j.localizedName ?? `Organization ${j.id}`,
+          vanityName: j.vanityName ?? null,
+        });
+      } catch (e) {
+        console.warn("LinkedIn org fetch failed:", urn, (e as Error).message);
+      }
+    }),
+  );
+  return orgs;
 }
 
 async function uploadImage(
@@ -174,6 +267,11 @@ export const linkedinProvider: SocialProviderImpl = {
     };
 
     const userinfo = await fetchUserinfo(data.access_token);
+    const personUrn = `urn:li:person:${userinfo.sub}`;
+    // Best-effort fetch of admin'd Pages so the user can choose which
+    // identity to post as. Failures degrade gracefully to personal-only.
+    const organizations = await fetchAdminOrganizations(data.access_token).catch(() => []);
+
     return {
       accountId: userinfo.sub,
       accountName: userinfo.name ?? null,
@@ -184,9 +282,14 @@ export const linkedinProvider: SocialProviderImpl = {
       refreshToken: data.refresh_token ?? null,
       tokenExpiresAt: new Date(Date.now() + data.expires_in * 1000),
       meta: {
-        authorUrn: `urn:li:person:${userinfo.sub}`,
+        // Default author = personal. The user can switch to a Page from the
+        // Connections UI; we update meta.authorUrn there.
+        authorUrn: personUrn,
+        personUrn,
+        personName: userinfo.name ?? null,
         picture: userinfo.picture ?? null,
         email: userinfo.email ?? null,
+        organizations,
       },
     };
   },
@@ -224,7 +327,10 @@ export const linkedinProvider: SocialProviderImpl = {
         expires_in: number;
         refresh_token?: string;
       };
+      // Preserve the user's chosen authorUrn but re-fetch the list of
+      // admin'd orgs since memberships can change.
       const meta = (connection.meta as Record<string, unknown>) ?? {};
+      const orgs = await fetchAdminOrganizations(data.access_token).catch(() => []);
       return {
         accountId: connection.accountId,
         accountName: connection.accountName,
@@ -232,7 +338,7 @@ export const linkedinProvider: SocialProviderImpl = {
         accessToken: data.access_token,
         refreshToken: data.refresh_token ?? connection.refreshToken,
         tokenExpiresAt: new Date(Date.now() + data.expires_in * 1000),
-        meta,
+        meta: { ...meta, organizations: orgs },
       };
     } catch (e) {
       console.warn("LinkedIn token refresh failed:", (e as Error).message);

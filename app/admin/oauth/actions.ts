@@ -15,13 +15,36 @@ async function requireAdmin() {
   return user;
 }
 
+// 0.0.0.0 is the wildcard bind address — no client can ever reach it. We
+// also block well-known unreachable hosts that show up when somebody types
+// in whatever the dev server prints. localhost / 127.0.0.1 are fine for
+// real local-machine OAuth testing, but not when the URI gets shipped as
+// the production redirect.
+function isPubliclyReachable(uri: string): boolean {
+  try {
+    const u = new URL(uri);
+    if (u.hostname === "0.0.0.0") return false;
+    if (u.hostname === "::") return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const credsSchema = z.object({
   provider: z.enum(["instagram", "linkedin"]),
   clientId: z.string().min(2).max(200),
   // Allow empty on update — the server preserves the existing secret.
   // Required on create.
   clientSecret: z.string().max(500),
-  redirectUri: z.string().url().max(500),
+  redirectUri: z
+    .string()
+    .url("Redirect URI must be a full URL (https://...)")
+    .max(500)
+    .refine(
+      isPubliclyReachable,
+      "Redirect URI host is not reachable from a browser. Use the public hostname your users hit (not 0.0.0.0).",
+    ),
 });
 
 export async function saveOAuthAppAction(input: unknown) {

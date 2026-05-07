@@ -19,7 +19,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { ProviderGlyph } from "@/components/provider-glyph";
-import { disconnectAction, updateConnectionLabelAction } from "./actions";
+import {
+  disconnectAction,
+  setLinkedInAuthorAction,
+  updateConnectionLabelAction,
+} from "./actions";
 import { formatDate } from "@/lib/utils";
 import type { SocialProvider } from "@prisma/client";
 
@@ -37,6 +41,11 @@ export type ConnectionRow = {
     connectedAt: string;
     updatedAt: string;
     lastError: string | null;
+    // LinkedIn "post as" identity. Null for non-LinkedIn providers.
+    authorUrn: string | null;
+    personUrn: string | null;
+    personName: string | null;
+    organizations: Array<{ urn: string; id: string; name: string; vanityName: string | null }>;
   } | null;
 };
 
@@ -252,6 +261,16 @@ function ProviderRow({
             )}
           </div>
 
+          {row.provider === "linkedin" && (
+            <LinkedInAuthorSelector
+              slug={slug}
+              personUrn={c.personUrn}
+              personName={c.personName}
+              organizations={c.organizations}
+              authorUrn={c.authorUrn}
+            />
+          )}
+
           {c.lastError && (
             <div className="mt-3 flex items-start gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-md p-2.5">
               <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
@@ -302,6 +321,74 @@ function ProviderRow({
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function LinkedInAuthorSelector({
+  slug,
+  personUrn,
+  personName,
+  organizations,
+  authorUrn,
+}: {
+  slug: string;
+  personUrn: string | null;
+  personName: string | null;
+  organizations: Array<{ urn: string; id: string; name: string; vanityName: string | null }>;
+  authorUrn: string | null;
+}) {
+  const [pending, startTransition] = useTransition();
+  const router = useRouter();
+
+  function onChange(value: string) {
+    startTransition(async () => {
+      const res = await setLinkedInAuthorAction(slug, value);
+      if ("error" in res && res.error) {
+        toast.error(res.error);
+        return;
+      }
+      const label =
+        value === personUrn
+          ? `personal profile${personName ? ` (${personName})` : ""}`
+          : organizations.find((o) => o.urn === value)?.name ?? "selected page";
+      toast.success(`Posting as ${label}`);
+      router.refresh();
+    });
+  }
+
+  return (
+    <div className="mt-3 border-t border-border/40 pt-3 space-y-1.5">
+      <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+        Posting as
+      </label>
+      <select
+        className="w-full h-9 px-2 rounded-md border border-border bg-background text-sm"
+        value={authorUrn ?? personUrn ?? ""}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={pending}
+      >
+        {personUrn && (
+          <option value={personUrn}>
+            Personal profile{personName ? ` — ${personName}` : ""}
+          </option>
+        )}
+        {organizations.map((o) => (
+          <option key={o.urn} value={o.urn}>
+            Page — {o.name}
+            {o.vanityName ? ` (linkedin.com/company/${o.vanityName})` : ""}
+          </option>
+        ))}
+      </select>
+      {organizations.length === 0 && (
+        <p className="text-xs text-muted-foreground">
+          No Company Pages found. To post as a Page, your LinkedIn app needs the
+          Marketing Developer Platform product approved (for the
+          <code className="font-mono mx-1">r_organization_admin</code> +
+          <code className="font-mono mx-1">w_organization_social</code> scopes), and
+          you must be an admin of the Page. Reconnect after enabling.
+        </p>
+      )}
     </div>
   );
 }

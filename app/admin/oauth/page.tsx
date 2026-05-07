@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import { db } from "@/lib/db";
@@ -16,9 +17,20 @@ export default async function OAuthAdminPage({
   if (!user) redirect("/login");
   if (!isAdmin(user.email)) redirect("/app");
 
-  // Build the public origin for default redirect URIs. Best-effort — admins
-  // can override.
-  const publicUrl = process.env.PUBLIC_URL ?? process.env.NEXT_PUBLIC_BASE_URL ?? "";
+  // Build the public origin for default redirect URIs. Prefer PUBLIC_URL,
+  // then NEXT_PUBLIC_BASE_URL, and finally infer it from the request — that
+  // way admins on a fresh deploy get a useful default instead of a blank.
+  // We deliberately reject 0.0.0.0 here since it's the server bind address
+  // and never a real callback URL.
+  const headerList = await headers();
+  const fwdProto = headerList.get("x-forwarded-proto") ?? "https";
+  const fwdHost = headerList.get("x-forwarded-host") ?? headerList.get("host") ?? "";
+  const inferredFromRequest =
+    fwdHost && !fwdHost.startsWith("0.0.0.0") ? `${fwdProto}://${fwdHost}` : "";
+  const publicUrl =
+    process.env.PUBLIC_URL ??
+    process.env.NEXT_PUBLIC_BASE_URL ??
+    inferredFromRequest;
 
   const apps = await db.oAuthApp.findMany();
   const ig = apps.find((a) => a.provider === "instagram");
