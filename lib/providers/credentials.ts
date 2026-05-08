@@ -15,13 +15,13 @@ export type OAuthCreds = {
 };
 
 const ENV_FALLBACK: Record<SocialProvider, () => Partial<OAuthCreds>> = {
-  // Instagram: prefer the new INSTAGRAM_* names (the Instagram-Login flow
-  // uses Instagram-app credentials, not the parent Meta-app ones). Fall
-  // back to META_* for anyone who configured those before the revamp.
+  // Instagram uses the Instagram Business Login flow — these are the
+  // *Instagram* App ID + Secret from the Meta dashboard's "API setup with
+  // Instagram business login" panel, not the parent Meta App credentials.
   instagram: () => ({
-    clientId: process.env.INSTAGRAM_APP_ID || process.env.META_APP_ID,
-    clientSecret: process.env.INSTAGRAM_APP_SECRET || process.env.META_APP_SECRET,
-    redirectUri: process.env.INSTAGRAM_REDIRECT_URI || process.env.META_REDIRECT_URI,
+    clientId: process.env.INSTAGRAM_APP_ID,
+    clientSecret: process.env.INSTAGRAM_APP_SECRET,
+    redirectUri: process.env.INSTAGRAM_REDIRECT_URI,
   }),
   linkedin: () => ({
     clientId: process.env.LINKEDIN_CLIENT_ID,

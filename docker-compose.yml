@@ -85,11 +85,6 @@ services:
       INSTAGRAM_APP_ID: '${INSTAGRAM_APP_ID:-}'
       INSTAGRAM_APP_SECRET: '${INSTAGRAM_APP_SECRET:-}'
       INSTAGRAM_REDIRECT_URI: '${INSTAGRAM_REDIRECT_URI:-}'
-      # Legacy META_* names — kept for migrating deployments. Newer ones
-      # should set INSTAGRAM_* instead.
-      META_APP_ID: '${META_APP_ID:-}'
-      META_APP_SECRET: '${META_APP_SECRET:-}'
-      META_REDIRECT_URI: '${META_REDIRECT_URI:-}'
       LINKEDIN_CLIENT_ID: '${LINKEDIN_CLIENT_ID:-}'
       LINKEDIN_CLIENT_SECRET: '${LINKEDIN_CLIENT_SECRET:-}'
       LINKEDIN_REDIRECT_URI: '${LINKEDIN_REDIRECT_URI:-}'

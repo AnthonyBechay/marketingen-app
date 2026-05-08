@@ -4,7 +4,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type { SocialProvider } from "@prisma/client";
 
 function secret() {
-  const explicit = process.env.SESSION_SECRET || process.env.META_APP_SECRET;
+  const explicit = process.env.SESSION_SECRET;
   if (explicit) return explicit;
   // No explicit secret set — derive a stable one from DATABASE_URL. This
   // keeps OAuth working out of the box for self-hosted setups that haven't
