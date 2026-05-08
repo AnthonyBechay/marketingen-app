@@ -54,7 +54,7 @@ export default async function OAuthAdminPage({
       <div className="space-y-6">
         <OAuthAppForm
           provider="instagram"
-          providerName="Meta (Instagram + Facebook)"
+          providerName="Instagram (Business Login)"
           existing={
             ig
               ? { clientId: ig.clientId, clientSecret: "(saved — leave blank to keep)", redirectUri: ig.redirectUri }
@@ -64,11 +64,12 @@ export default async function OAuthAdminPage({
           docsUrl="https://developers.facebook.com/apps/"
           highlight={sp.provider === "instagram"}
           guide={[
-            "Create a Meta app at developers.facebook.com/apps (type: Business).",
-            "Add the products: 'Instagram Graph API' and 'Facebook Login for Business'.",
-            "Under Facebook Login → Settings, paste the redirect URI shown below as a Valid OAuth Redirect URI.",
-            "Get App ID and App Secret from Settings → Basic, paste them here.",
-            "Submit for App Review when you want to go live (instagram_basic, instagram_content_publish, pages_show_list, pages_read_engagement, business_management).",
+            "Create a Meta app at developers.facebook.com/apps (any type works).",
+            "Add the 'Instagram' product → choose 'API setup with Instagram business login' (NOT the Facebook-login one).",
+            "On that setup screen, copy the 'Instagram app ID' and 'Instagram app secret' — these are what you paste below (NOT the parent Meta App ID).",
+            "Under 'Business login settings → OAuth redirect URIs', add the redirect URL shown below.",
+            "Request the scopes 'instagram_business_basic' and 'instagram_business_content_publish' (and the messages/comments scopes if you want those features later).",
+            "End users only need an Instagram Business or Creator account — no Facebook Page required.",
           ]}
         />
         <OAuthAppForm

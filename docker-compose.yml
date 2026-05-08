@@ -74,9 +74,19 @@ services:
       # LinkedIn API version override (optional)
       LINKEDIN_API_VERSION: '${LINKEDIN_API_VERSION:-}'
 
-      # Legacy OAuth-via-env fallbacks. Prefer /admin/oauth (DB-backed)
-      # for everything below; these are only read if the OAuthApp row
-      # for the provider doesn't exist.
+      # OAuth-via-env fallbacks. Prefer /admin/oauth (DB-backed) for
+      # everything below; these are only read if the OAuthApp row for the
+      # provider doesn't exist.
+      #
+      # Instagram uses the Instagram Business Login flow (no Facebook Page
+      # required). The credentials below are the *Instagram* App ID +
+      # Secret from your Meta dashboard's "API setup with Instagram
+      # business login" panel — NOT the parent Meta App ID.
+      INSTAGRAM_APP_ID: '${INSTAGRAM_APP_ID:-}'
+      INSTAGRAM_APP_SECRET: '${INSTAGRAM_APP_SECRET:-}'
+      INSTAGRAM_REDIRECT_URI: '${INSTAGRAM_REDIRECT_URI:-}'
+      # Legacy META_* names — kept for migrating deployments. Newer ones
+      # should set INSTAGRAM_* instead.
       META_APP_ID: '${META_APP_ID:-}'
       META_APP_SECRET: '${META_APP_SECRET:-}'
       META_REDIRECT_URI: '${META_REDIRECT_URI:-}'

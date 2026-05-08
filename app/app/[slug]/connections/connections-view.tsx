@@ -164,7 +164,7 @@ function ProviderRow({
             <div className="font-semibold">{row.providerName}</div>
             <div className="text-sm text-muted-foreground">
               {row.provider === "instagram"
-                ? "Connect a Facebook Page linked to an Instagram Business account."
+                ? "Connect your Instagram Business or Creator account."
                 : "Connect your LinkedIn member account to post to your feed."}
             </div>
           </div>
