@@ -74,6 +74,12 @@ services:
       # LinkedIn API version override (optional)
       LINKEDIN_API_VERSION: '${LINKEDIN_API_VERSION:-}'
 
+      # Opt-in: request org-posting scopes (r_organization_admin +
+      # w_organization_social) at OAuth time. Only enable AFTER your
+      # LinkedIn app has Community Management API / Marketing Developer
+      # Platform approval — otherwise OAuth fails for every user.
+      LINKEDIN_ENABLE_ORG_POSTING: '${LINKEDIN_ENABLE_ORG_POSTING:-}'
+
       # OAuth-via-env fallbacks. Prefer /admin/oauth (DB-backed) for
       # everything below; these are only read if the OAuthApp row for the
       # provider doesn't exist.

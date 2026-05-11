@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { verifyState } from "@/lib/oauth-state";
 import { getProvider } from "@/lib/providers";
+import { publicUrl } from "@/lib/public-origin";
 import type { Prisma, SocialProvider } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
@@ -19,8 +20,14 @@ function backToConnections(
   slug: string,
   params: Record<string, string>,
 ) {
-  const url = new URL(`/app/${slug}/connections`, req.url);
+  const url = publicUrl(req, `/app/${slug}/connections`);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+  return NextResponse.redirect(url);
+}
+
+function backToApp(req: NextRequest, error: string) {
+  const url = publicUrl(req, "/app");
+  url.searchParams.set("conn_error", error.slice(0, 240));
   return NextResponse.redirect(url);
 }
 
@@ -30,7 +37,7 @@ export async function GET(
 ) {
   try {
     const user = await getCurrentUser();
-    if (!user) return NextResponse.redirect(new URL("/login", req.url));
+    if (!user) return NextResponse.redirect(publicUrl(req, "/login"));
 
     const { provider: providerParam } = await params;
     if (!ALLOWED_PROVIDERS.includes(providerParam as SocialProvider)) {
@@ -43,26 +50,18 @@ export async function GET(
     const state = sp.get("state");
     const errorDesc = sp.get("error_description") || sp.get("error");
 
-    if (errorDesc) {
-      return NextResponse.redirect(
-        new URL(`/app?conn_error=${encodeURIComponent(errorDesc)}`, req.url),
-      );
-    }
-    if (!code || !state) {
-      return NextResponse.redirect(new URL("/app?conn_error=missing_params", req.url));
-    }
+    if (errorDesc) return backToApp(req, errorDesc);
+    if (!code || !state) return backToApp(req, "missing_params");
 
     const verified = verifyState(state);
     if (!verified || verified.userId !== user.id || verified.provider !== provider) {
-      return NextResponse.redirect(new URL("/app?conn_error=invalid_state", req.url));
+      return backToApp(req, "invalid_state");
     }
 
     const project = await db.project.findFirst({
       where: { id: verified.projectId, userId: user.id },
     });
-    if (!project) {
-      return NextResponse.redirect(new URL("/app?conn_error=project_not_found", req.url));
-    }
+    if (!project) return backToApp(req, "project_not_found");
 
     const info = await getProvider(provider).exchangeCode(code);
     await db.socialConnection.upsert({
@@ -93,8 +92,6 @@ export async function GET(
   } catch (e) {
     const msg = (e as Error).message ?? "OAuth callback failed";
     console.error("oauth/callback failed:", msg);
-    const url = new URL("/app", req.url);
-    url.searchParams.set("conn_error", msg.slice(0, 240));
-    return NextResponse.redirect(url);
+    return backToApp(req, msg);
   }
 }

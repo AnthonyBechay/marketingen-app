@@ -382,11 +382,10 @@ function LinkedInAuthorSelector({
       </select>
       {organizations.length === 0 && (
         <p className="text-xs text-muted-foreground">
-          No Company Pages found. To post as a Page, your LinkedIn app needs the
-          Marketing Developer Platform product approved (for the
-          <code className="font-mono mx-1">r_organization_admin</code> +
-          <code className="font-mono mx-1">w_organization_social</code> scopes), and
-          you must be an admin of the Page. Reconnect after enabling.
+          Posting as a Company Page is disabled. To enable it, the site admin must:
+          {" "}1) get LinkedIn&apos;s Community Management API / Marketing Developer Platform approved,
+          {" "}2) set <code className="font-mono mx-1">LINKEDIN_ENABLE_ORG_POSTING=true</code> in the server env,
+          {" "}3) ask you to reconnect. Until then, posts go out as your personal profile.
         </p>
       )}
     </div>

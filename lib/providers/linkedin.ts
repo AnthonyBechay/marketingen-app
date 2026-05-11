@@ -34,17 +34,22 @@ const LI_API_VERSION = process.env.LINKEDIN_API_VERSION || "202508";
 // Scopes:
 //   openid profile email     — OIDC sign-in identity (the human)
 //   w_member_social          — post to the member's own feed
-//   r_organization_admin     — list Pages the member admins
-//   w_organization_social    — post on those Pages' behalf
+//   r_organization_admin     — list Pages the member admins (opt-in)
+//   w_organization_social    — post on those Pages' behalf (opt-in)
 //
-// `r_organization_admin` and `w_organization_social` require LinkedIn's
-// "Marketing Developer Platform" product approval on the app. If your app
-// doesn't have it yet, LinkedIn will silently drop those scopes and the
-// connection will only be able to post personally — that's why the
-// organization fetch below is wrapped in a try/catch instead of failing
-// the whole OAuth.
-const REQUIRED_SCOPES =
-  "openid profile email w_member_social r_organization_admin w_organization_social";
+// The org scopes need LinkedIn's "Community Management API" / "Marketing
+// Developer Platform" product approval on the app. When that's NOT yet
+// approved, requesting them makes the whole OAuth fail with
+// "Scope … is not authorized for your application". So we default to
+// personal-only and require the operator to opt into org posting via
+// the LINKEDIN_ENABLE_ORG_POSTING=true env var once approval lands.
+const BASE_SCOPES = ["openid", "profile", "email", "w_member_social"];
+const ORG_SCOPES = ["r_organization_admin", "w_organization_social"];
+
+function buildScopes(): string {
+  const enableOrg = process.env.LINKEDIN_ENABLE_ORG_POSTING === "true";
+  return (enableOrg ? [...BASE_SCOPES, ...ORG_SCOPES] : BASE_SCOPES).join(" ");
+}
 
 type LiUserinfo = {
   sub: string;
@@ -238,7 +243,7 @@ export const linkedinProvider: SocialProviderImpl = {
       client_id: creds.clientId,
       redirect_uri: creds.redirectUri,
       state,
-      scope: REQUIRED_SCOPES,
+      scope: buildScopes(),
     });
     return `${LI_AUTH_DIALOG}?${params}`;
   },
@@ -269,8 +274,12 @@ export const linkedinProvider: SocialProviderImpl = {
     const userinfo = await fetchUserinfo(data.access_token);
     const personUrn = `urn:li:person:${userinfo.sub}`;
     // Best-effort fetch of admin'd Pages so the user can choose which
-    // identity to post as. Failures degrade gracefully to personal-only.
-    const organizations = await fetchAdminOrganizations(data.access_token).catch(() => []);
+    // identity to post as. Only attempted when org posting is opted in
+    // — otherwise we don't have the scope to read /organizationAcls.
+    const organizations =
+      process.env.LINKEDIN_ENABLE_ORG_POSTING === "true"
+        ? await fetchAdminOrganizations(data.access_token).catch(() => [])
+        : [];
 
     return {
       accountId: userinfo.sub,
@@ -330,7 +339,10 @@ export const linkedinProvider: SocialProviderImpl = {
       // Preserve the user's chosen authorUrn but re-fetch the list of
       // admin'd orgs since memberships can change.
       const meta = (connection.meta as Record<string, unknown>) ?? {};
-      const orgs = await fetchAdminOrganizations(data.access_token).catch(() => []);
+      const orgs =
+        process.env.LINKEDIN_ENABLE_ORG_POSTING === "true"
+          ? await fetchAdminOrganizations(data.access_token).catch(() => [])
+          : ((meta.organizations as LiOrganization[] | undefined) ?? []);
       return {
         accountId: connection.accountId,
         accountName: connection.accountName,

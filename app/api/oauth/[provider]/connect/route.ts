@@ -9,6 +9,7 @@ import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { signState } from "@/lib/oauth-state";
 import { getProvider, providerEnabled } from "@/lib/providers";
+import { publicUrl } from "@/lib/public-origin";
 import type { SocialProvider } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +19,7 @@ const ALLOWED_PROVIDERS: SocialProvider[] = ["instagram", "linkedin"];
 
 function backWithError(req: NextRequest, slug: string | null, msg: string) {
   const target = slug ? `/app/${slug}/connections` : "/app";
-  const url = new URL(target, req.url);
+  const url = publicUrl(req, target);
   url.searchParams.set("conn_error", msg.slice(0, 240));
   return NextResponse.redirect(url);
 }
@@ -30,7 +31,7 @@ export async function GET(
   const slug = req.nextUrl.searchParams.get("slug");
   try {
     const user = await getCurrentUser();
-    if (!user) return NextResponse.redirect(new URL("/login", req.url));
+    if (!user) return NextResponse.redirect(publicUrl(req, "/login"));
 
     const { provider: providerParam } = await params;
     if (!ALLOWED_PROVIDERS.includes(providerParam as SocialProvider)) {
